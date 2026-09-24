@@ -1,0 +1,7 @@
+# Netlify: the site is the app/ folder. No build step.
+[build]
+  publish = "app"
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cache-Control = "no-cache"
