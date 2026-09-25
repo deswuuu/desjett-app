@@ -1,5 +1,5 @@
 // Offline shell: caches the app files so it opens without signal; data lives in the app's storage.
-const C = 'dj-v1';
+const C = 'dj-v2';
 const FILES = ['./', 'index.html', 'styles.css', 'app.js', 'store.js', 'config.js', 'manifest.webmanifest', 'assets/bunny.png', 'assets/puppy.png', 'assets/icon-192.png'];
 self.addEventListener('install', e => e.waitUntil(caches.open(C).then(c => c.addAll(FILES)).then(() => self.skipWaiting())));
 self.addEventListener('activate', e => e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== C).map(k => caches.delete(k)))).then(() => self.clients.claim())));

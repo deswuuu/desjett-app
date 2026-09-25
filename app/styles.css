@@ -297,3 +297,11 @@ ol.steps b{color:var(--fg);font-weight:500}
 .agroup .list{margin-top:0}
 
 .mdiv{font-size:13px;font-weight:500;color:var(--fg2);padding:6px 0 0;letter-spacing:-.01em}
+
+/* Behave like a native iOS app: no zoom on tapping a text box, no double-tap zoom, no rubber-band page */
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+html,body{overscroll-behavior:none}
+body{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+button,a,.tap{touch-action:manipulation}
+/* a button that's already working */
+.busy{opacity:.55;pointer-events:none}
