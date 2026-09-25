@@ -9,13 +9,13 @@
   const listeners = new Set();
   let docs = {};           // id -> {id, collection, data, updated_at}
   let sb = null, sbUser = null, channel = null;
-  let queue = { put: {}, del: {}, blob: {} };   // pending remote work, keyed by id
+  let queue = { put: {}, del: {}, blob: {}, blobDel: {} };   // pending remote work, keyed by id
   let synced = new Set();  // ids we know exist on the server (so a missing one means "deleted elsewhere")
   let uploaded = new Set();// blob ids already in the bucket
 
   const readJSON = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k) || 'null'); return v == null ? d : v; } catch (e) { return d; } };
   const writeJSON = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
-  function loadLocal(){ docs = readJSON(LS, {}); queue = Object.assign({ put: {}, del: {}, blob: {} }, readJSON(LQ, {})); synced = new Set(readJSON(LSYNC, [])); uploaded = new Set(readJSON(LUP, [])); }
+  function loadLocal(){ docs = readJSON(LS, {}); queue = Object.assign({ put: {}, del: {}, blob: {}, blobDel: {} }, readJSON(LQ, {})); synced = new Set(readJSON(LSYNC, [])); uploaded = new Set(readJSON(LUP, [])); }
   function saveLocal(){ writeJSON(LS, docs); }
   function saveQueue(){ writeJSON(LQ, queue); }
   function saveSynced(){ writeJSON(LSYNC, [...synced]); }
@@ -65,6 +65,9 @@
         chunk.forEach(id => { if (queue.put[id] && docs[id] && queue.put[id] <= docs[id].updated_at) delete queue.put[id]; synced.add(id); });
         saveQueue(); saveSynced();
       }
+      // removed photos / voice notes
+      const bdel = Object.keys(queue.blobDel);
+      if (bdel.length) { const { error } = await sb.storage.from('assets').remove(bdel); if (error) { failed = true; console.warn('remove', error.message); } else { bdel.forEach(id => { delete queue.blobDel[id]; uploaded.delete(id); }); saveQueue(); saveUploaded(); } }
       // photos / voice notes
       for (const id of Object.keys(queue.blob)) {
         const blob = await getBlobLocal(id).catch(() => null);
@@ -76,8 +79,8 @@
     } catch (e) { failed = true; console.warn('sync', e.message); }
     flushing = false;
     if (failed) { scheduleFlush(retryMs); retryMs = Math.min(retryMs * 2, 60000); }
-    else { retryMs = 2000; if (Object.keys(queue.put).length || Object.keys(queue.del).length || Object.keys(queue.blob).length) scheduleFlush(); }
-    Store.pending = Object.keys(queue.put).length + Object.keys(queue.del).length + Object.keys(queue.blob).length;
+    else { retryMs = 2000; if (Object.keys(queue.put).length || Object.keys(queue.del).length || Object.keys(queue.blob).length || Object.keys(queue.blobDel).length) scheduleFlush(); }
+    Store.pending = Object.keys(queue.put).length + Object.keys(queue.del).length + Object.keys(queue.blob).length + Object.keys(queue.blobDel).length;
   }
 
   function writeDoc(collection, data){
@@ -104,6 +107,11 @@
       queue.blob[id] = 1; saveQueue(); scheduleFlush();
       return id;
     },
+    async removeBlob(id){
+      if (!id) return; urlCache.delete(id); delete queue.blob[id];
+      try { const db = await openIDB(); await new Promise(res => { const t = db.transaction('assets','readwrite'); t.objectStore('assets').delete(id); t.oncomplete = res; t.onerror = res; }); } catch (e) {}
+      if (uploaded.has(id) || sb) queue.blobDel[id] = 1; saveQueue(); scheduleFlush();
+    },
     async blobUrl(id){
       if (!id) return null;
       if (urlCache.has(id)) return urlCache.get(id);
@@ -114,7 +122,7 @@
     async blob(id){ let b = await getBlobLocal(id).catch(() => null); if (!b && sb) { const { data } = await sb.storage.from('assets').download(id); if (data) { b = data; putBlobLocal(id, b).catch(() => {}); uploaded.add(id); saveUploaded(); } } return b; },
     exportJSON(){ return JSON.stringify(Object.values(docs), null, 2); },
     async importJSON(text){ const arr = JSON.parse(text); arr.forEach(r => { docs[r.id] = r; queue.put[r.id] = r.updated_at; }); saveLocal(); saveQueue(); emit(); scheduleFlush(); },
-    wipe(){ docs = {}; queue = { put: {}, del: {}, blob: {} }; synced = new Set(); saveLocal(); saveQueue(); saveSynced(); emit(); },
+    wipe(){ docs = {}; queue = { put: {}, del: {}, blob: {}, blobDel: {} }; synced = new Set(); saveLocal(); saveQueue(); saveSynced(); emit(); },
     flush(){ return flush(); },
 
     // ---------- Supabase ----------

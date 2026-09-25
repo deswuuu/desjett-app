@@ -16,6 +16,7 @@ const fmtDow = s => { const d = parseDate(s); return DOW[d.getDay()] + ' ' + d.g
 const daysBetween = (a, b) => Math.round((parseDate(b) - parseDate(a)) / 86400000);
 const addDays = (s, n) => { const d = parseDate(s); d.setDate(d.getDate()+n); return isoDate(d); };
 const CATS = [['flight','Flight'],['stay','Stay'],['food','Food'],['transit','Transport'],['fun','Fun']];
+const OCC_CATS = [['gift','Gift'],['food','Dinner'],['fun','Other']];
 const CITIES = { Vancouver:{lat:49.28,lon:-123.12,tz:'America/Vancouver'}, Toronto:{lat:43.65,lon:-79.38,tz:'America/Toronto'}, Montreal:{lat:45.5,lon:-73.57,tz:'America/Toronto'}, Calgary:{lat:51.05,lon:-114.07,tz:'America/Edmonton'}, 'New York':{lat:40.71,lon:-74.01,tz:'America/New_York'}, 'Los Angeles':{lat:34.05,lon:-118.24,tz:'America/Los_Angeles'}, London:{lat:51.5,lon:-0.12,tz:'Europe/London'}, Seoul:{lat:37.57,lon:126.98,tz:'Asia/Seoul'}, Tokyo:{lat:35.68,lon:139.69,tz:'Asia/Tokyo'} };
 const WX = {
   sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
@@ -40,24 +41,44 @@ const D = {
   monthsSince(date){ const a = D.anniversary(); if (!a) return null; const [ay,am] = a.split('-').map(Number), [y,m] = date.split('-').map(Number); return (y-ay)*12 + (m-am); },
   isMonthiversary(date){ const a = D.anniversary(); return !!a && date.slice(8) === a.slice(8) && date >= a; },
   saveSettings(patch){ return Store.put('settings', Object.assign({}, D.settings(), patch, {id:'settings'})); },
-  trips(){ return Store.all('trips').sort((a,b) => a.start < b.start ? -1 : 1); },
+  trips(){ return Store.all('trips').filter(t => !t.occasion).sort((a,b) => a.start < b.start ? -1 : 1); },
+  // occasions (birthdays, anniversaries…) live in the same collection; a hidden one only shows for whoever made it
+  occasions(){ const me = (D.me()||{}).id; return Store.all('trips').filter(t => t.occasion && (!t.secret || t.authorId === me)).sort((a,b) => a.start < b.start ? -1 : 1); },
+  occasionForDate(date){ return D.occasions().find(t => date >= t.start && date <= t.end) || null; },
+  isHiddenFromMe(tripId){ if (!tripId) return false; const t = Store.get('trips', tripId); return !!(t && t.occasion && t.secret && t.authorId && t.authorId !== (D.me()||{}).id); },
   trip(id){ return Store.get('trips', id); },
-  moments(){ const me = (D.me()||{}).id; return Store.all('moments').filter(m => !(m.kind === 'plan' && m.hidden && m.authorId && m.authorId !== me)); },
+  moments(){ const me = (D.me()||{}).id; return Store.all('moments').filter(m => !(m.kind === 'plan' && m.hidden && m.authorId && m.authorId !== me) && !D.isHiddenFromMe(m.tripId)); },
   tripMoments(id){ return D.moments().filter(m => m.tripId === id).sort((a,b) => (a.date+a.createdAt) < (b.date+b.createdAt) ? -1 : 1); },
   events(){ return Store.all('events'); },
   bubbles(){ return Store.all('bubbles'); },
   tripForDate(date){ return D.trips().find(t => date >= t.start && date <= t.end) || null; },
-  share(m, uid){ const c = m.cost; if (!c || !+c.amount) return 0; if (c.paidBy !== 'both') return c.paidBy === uid ? +c.amount : 0; const sp = c.split || {}; if (sp.mode === 'amt') return sp[uid] != null ? +sp[uid] : +c.amount / 2; return +c.amount * ((sp[uid] != null ? +sp[uid] : 50) / 100); },
-  payerText(m){ const c = m.cost; if (!c) return ''; if (c.paidBy !== 'both') return (D.user(c.paidBy)||{}).name || ''; const [a, b] = D.users2(); const sa = D.share(m, a.id), sb = D.share(m, b.id); const even = Math.abs(sa - sb) < 0.01; return even ? `${a.name} & ${b.name}` : `${a.name} ${money2(sa)} · ${b.name} ${money2(sb)}`; },
-  tripCost(t){ const ms = D.tripMoments(t.id); const by = {}; let total = 0; const cat = {}; ms.forEach(m => { if (m.cost && m.cost.amount) { total += +m.cost.amount; D.users().forEach(u => { by[u.id] = (by[u.id]||0) + D.share(m, u.id); }); const c = m.cost.tag || 'other'; cat[c] = (cat[c]||0) + +m.cost.amount; } }); return { total, by, cat }; },
-  tripPlan(t){ const g = D.settings().tripGuess; const nights = Math.max(1, daysBetween(t.start, t.end)); const days = nights + 1; const def = { flight: g.flight, stay: g.night * nights, food: Math.round(g.day * days * 0.6), transit: Math.round(g.day * days * 0.15), fun: Math.round(g.day * days * 0.25) }; (t.cats||[]).forEach(c => def[c.key] = 0); const out = Object.assign(def, t.plan || {}); Object.keys(t.planCfg || {}).forEach(k => { out[k] = D.planTotalFor(t, k); }); return out; },
-  planCfg(t, key){ const c = (t.planCfg || {})[key]; if (c) return c; const g = D.settings().tripGuess; const legacy = (t.plan || {})[key]; if (legacy != null) return { mode:'total', who:'both', a: +legacy, b: 0 }; if (key === 'flight') return { mode:'total', who:'both', a: g.flight, b: 0 }; if (key === 'stay') return { mode:'day', who:'both', a: g.night, b: 0 }; const per = { food: 0.6, transit: 0.15, fun: 0.25 }[key]; return per ? { mode:'day', who:'both', a: Math.round(g.day * per), b: 0 } : { mode:'total', who:'both', a: 0, b: 0 }; },
+  // A memory can hold several cost lines (items), plus the single m.cost that flights/bookings and older memories use.
+  costLines(m){ const out = []; if (m.cost && +m.cost.amount) out.push(Object.assign({}, m.cost, { m, i: -1 })); (m.items||[]).forEach((it, i) => { if (it.type === 'cost' && +it.amount) out.push(Object.assign({}, it, { m, i })); }); return out; },
+  costTotal(m){ return D.costLines(m).reduce((s,c) => s + +c.amount, 0); },
+  voices(m){ const out = []; if (m.voice) out.push({ asset: m.voice, dur: m.voiceDur, by: m.authorId, legacy: true }); (m.items||[]).forEach(it => { if (it.type === 'voice' && it.asset) out.push(Object.assign({ by: m.authorId }, it)); }); return out; },
+  songs(m){ const out = []; if (m.song) out.push({ url: m.song, title: m.songTitle, artist: m.songBy, legacy: true }); (m.items||[]).forEach(it => { if (it.type === 'song' && it.url) out.push(it); }); return out; },
+  shareOf(c, uid){ if (!c || !+c.amount) return 0; if (c.paidBy !== 'both') return c.paidBy === uid ? +c.amount : 0; const sp = c.split || {}; if (sp.mode === 'amt') return sp[uid] != null ? +sp[uid] : +c.amount / 2; return +c.amount * ((sp[uid] != null ? +sp[uid] : 50) / 100); },
+  share(m, uid){ return D.costLines(m).reduce((s,c) => s + D.shareOf(c, uid), 0); },
+  payerTextC(c){ if (!c) return ''; if (c.paidBy !== 'both') return (D.user(c.paidBy)||{}).name || ''; const [a, b] = D.users2(); const sa = D.shareOf(c, a.id), sb = D.shareOf(c, b.id); return Math.abs(sa - sb) < 0.01 ? `${a.name} & ${b.name}` : `${a.name} ${money2(sa)} · ${b.name} ${money2(sb)}`; },
+  payerText(m){ const ls = D.costLines(m); return ls.length === 1 ? D.payerTextC(ls[0]) : ls.length ? ls.map(c => D.payerTextC(c)).filter((v,i,a) => a.indexOf(v) === i).join(', ') : ''; },
+  tripLines(t){ return D.tripMoments(t.id).flatMap(m => D.costLines(m)); },
+  tripCost(t){ const by = {}; let total = 0; const cat = {}; D.tripLines(t).forEach(c => { total += +c.amount; D.users().forEach(u => { by[u.id] = (by[u.id]||0) + D.shareOf(c, u.id); }); const k = c.tag || 'other'; cat[k] = (cat[k]||0) + +c.amount; }); return { total, by, cat }; },
+  // birthdays: stored on each person as YYYY-MM-DD; this year's / next occurrence as an ISO date
+  bdayIn(u, year){ return u && u.birthday ? year + u.birthday.slice(4) : ''; },
+  nextBirthday(u, from){ if (!u || !u.birthday) return ''; from = from || today(); const y = +from.slice(0,4); const a = D.bdayIn(u, y); return a >= from ? a : D.bdayIn(u, y + 1); },
+  birthdaysOn(date){ return D.users().filter(u => u.birthday && u.birthday.slice(5) === date.slice(5)); },
+  presents(){ const me = (D.me()||{}).id; return Store.all('presents').filter(p => p.fromUser === me || (p.forUser === me && todayIn(D.me()) >= p.date)); },
+  wishes(){ const me = (D.me()||{}).id; return Store.all('wishes').filter(w => w.userId === me); },
+  wishlist(uid){ return Store.all('wishlist').filter(w => w.userId === uid).sort((a,b) => a.at - b.at); },
+  comments(mid, asset){ return Store.all('comments').filter(c => c.mid === mid && c.asset === asset).sort((a,b) => a.at - b.at); },
+  tripPlan(t){ if (t.occasion) { const out = {}; D.cats(t).forEach(c => out[c.key] = D.planTotalFor(t, c.key)); return out; } const g = D.settings().tripGuess; const nights = Math.max(1, daysBetween(t.start, t.end)); const days = nights + 1; const def = { flight: g.flight, stay: g.night * nights, food: Math.round(g.day * days * 0.6), transit: Math.round(g.day * days * 0.15), fun: Math.round(g.day * days * 0.25) }; (t.cats||[]).forEach(c => def[c.key] = 0); const out = Object.assign(def, t.plan || {}); Object.keys(t.planCfg || {}).forEach(k => { out[k] = D.planTotalFor(t, k); }); return out; },
+  planCfg(t, key){ const c = (t.planCfg || {})[key]; if (c) return c; if (t.occasion) return { mode:'total', who:'both', a: +((t.plan||{})[key]||0), b: 0 }; const g = D.settings().tripGuess; const legacy = (t.plan || {})[key]; if (legacy != null) return { mode:'total', who:'both', a: +legacy, b: 0 }; if (key === 'flight') return { mode:'total', who:'both', a: g.flight, b: 0 }; if (key === 'stay') return { mode:'day', who:'both', a: g.night, b: 0 }; const per = { food: 0.6, transit: 0.15, fun: 0.25 }[key]; return per ? { mode:'day', who:'both', a: Math.round(g.day * per), b: 0 } : { mode:'total', who:'both', a: 0, b: 0 }; },
   planUnits(t, key){ const nights = Math.max(1, daysBetween(t.start, t.end)); return key === 'stay' ? nights : nights + 1; },
   planTotalFor(t, key){ const c = D.planCfg(t, key); const per = c.who === 'each' ? (+c.a||0) + (+c.b||0) : (+c.a||0); return Math.round(per * (c.mode === 'day' ? D.planUnits(t, key) : 1)); },
   planTotal(t){ const p = D.tripPlan(t); return D.cats(t).reduce((a,c) => a + (+p[c.key]||0), 0); },
   envelopeMonthly(){ return D.settings().envelopes.reduce((s,e) => s + (+e.amount||0) * (e.per === 'each' ? 2 : 1), 0); },
   nextTrip(){ const t = today(); return D.trips().find(x => x.end >= t) || null; },
-  cats(t){ const base = CATS.map(([k,l]) => ({ key:k, label:l })); if (!t) return base; const custom = (t.cats||[]); const renamed = base.map(c => Object.assign({}, c, (t.catNames||{})[c.key] ? { label: t.catNames[c.key] } : {})).filter(c => !(t.hidden||[]).includes(c.key)); return renamed.concat(custom); },
+  cats(t){ const base = (t && t.occasion ? OCC_CATS : CATS).map(([k,l]) => ({ key:k, label:l })); if (!t) return base; const custom = (t.cats||[]); const renamed = base.map(c => Object.assign({}, c, (t.catNames||{})[c.key] ? { label: t.catNames[c.key] } : {})).filter(c => !(t.hidden||[]).includes(c.key)); return renamed.concat(custom); },
   catLabel(t, key){ const c = D.cats(t).find(c => c.key === key); return c ? c.label : (key === 'other' ? 'Other' : key); },
   latestBubble(userId){ return D.bubbles().filter(b => b.userId === userId && Date.now() - b.at < 86400000).sort((a,b) => b.at - a.at)[0] || null; },
   users2(){ const u = D.users(); return u.slice().sort((a,b) => a.id < b.id ? -1 : 1); },
@@ -86,7 +107,7 @@ function skyMode(user, at){
 function applySky(){
   const s = D.settings(), me = D.me();
   let mode = s.sky === 'light' ? 'day' : s.sky === 'dark' ? 'night' : skyMode(me);
-  if (['profile','between','gcal','emails','howto'].includes(route.name)) mode = 'day';
+  if (['profile','between','gcal','emails','howto','notify'].includes(route.name)) mode = 'day';
   document.documentElement.dataset.sky = mode;
   document.documentElement.dataset.anni = (D.isMonthiversary(today()) && mode !== 'night' && route.name === 'home') ? '1' : '';
   document.documentElement.dataset.tint = s.tint || 'sage';
@@ -108,6 +129,7 @@ async function weather(user){
   } catch (e) { return null; }
 }
 function timeIn(user, d){ d = d || new Date(); try { return new Intl.DateTimeFormat('en-CA', { timeZone: user.tz || undefined, hour:'numeric', minute:'2-digit', hour12:true }).format(d).replace(/\s?[ap]\.m\./i, m => m.trim().replace(/\./g,'')).replace(' ',' '); } catch(e){ return d.toLocaleTimeString('en-CA',{hour:'numeric',minute:'2-digit'}); } }
+function todayIn(user){ try { const p = new Intl.DateTimeFormat('en-CA', { timeZone: (user && user.tz) || undefined, year:'numeric', month:'2-digit', day:'2-digit' }).formatToParts(new Date()); const g = k => p.find(x => x.type === k).value; return `${g('year')}-${g('month')}-${g('day')}`; } catch (e) { return today(); } }
 function dateIn(user, d){ d = d || new Date(); try { return new Intl.DateTimeFormat('en-CA', { timeZone: user.tz || undefined, month:'short', day:'numeric' }).format(d); } catch(e){ return fmtD(today()); } }
 
 // ---------- shell ----------
@@ -122,6 +144,7 @@ const ACT = {};
 function bind(root){
   root.querySelectorAll('[data-go]').forEach(el => el.onclick = e => { e.preventDefault(); const [n, id] = el.dataset.go.split('/'); go(n, id ? { id } : null); });
   root.querySelectorAll('[data-act]').forEach(el => { const ev = el.dataset.on || 'click'; el['on' + ev] = e => { const [n, arg] = el.dataset.act.split('|'); if (!ACT[n]) return; if (ev === 'click' && el._busy) return; const r = ACT[n](arg, el, e); if (ev === 'click' && r && typeof r.then === 'function') { el._busy = true; el.classList.add('busy'); r.catch(err => { console.error(err); toast('Something went wrong: ' + (err && err.message || err)); }).finally(() => { el._busy = false; el.classList.remove('busy'); }); } }; });
+  root.querySelectorAll('[data-view]').forEach(el => el.addEventListener('click', e => { if (pendingSticker || e.target.classList.contains('stk') || el._dragged) return; ACT.viewPh(el.dataset.view); }));
   root.querySelectorAll('[data-asset]').forEach(async el => { const u = await Store.blobUrl(el.dataset.asset); if (u) { if (el.tagName === 'IMG') el.src = u; else el.style.backgroundImage = `url(${u})`; } });
 }
 function palOf(id){ const u = D.user(id); return u ? `<i class="pal ${u.pal}" title="${esc(u.name)}"></i>` : ''; }
@@ -132,7 +155,7 @@ function render(){
   const app = $('#app'); const s = D.settings();
   if (!s.setup) return renderSetup(app);
   if (!D.me()) return renderWho(app);
-  const R = { chat: renderChat, howto: renderHowto, gcal: renderGcal, cat: renderCategory, home: renderHome, trips: renderTrips, trip: renderTrip, days: renderDays, budget: renderBudget, photos: renderPhotos, day: renderDay, calendar: renderCalendar, profile: renderProfile, memories: renderMemories, between: renderBetween, emails: renderEmails, moments: renderMoments };
+  const R = { notify: renderNotify, chat: renderChat, howto: renderHowto, gcal: renderGcal, cat: renderCategory, home: renderHome, trips: renderTrips, trip: renderTrip, days: renderDays, budget: renderBudget, photos: renderPhotos, day: renderDay, calendar: renderCalendar, profile: renderProfile, memories: renderMemories, between: renderBetween, emails: renderEmails, moments: renderMoments };
   (R[route.name] || renderHome)(app);
   bind(app);
 }
@@ -204,6 +227,16 @@ function renderHome(app){
   const flightDay = t && today() === t.start && D.tripMoments(t.id).find(m => m.flight);
   const cost = t ? D.tripCost(t) : null, plan = t ? D.planTotal(t) : 0;
   const recent = D.moments().filter(m => m.kind !== 'plan' && m.kind !== 'booking').sort((a,b) => (b.date+b.createdAt).localeCompare(a.date+a.createdAt)).slice(0,3);
+  // birthdays, each judged in that person's own time zone
+  const isBday = u => !!(u && u.birthday && todayIn(u).slice(5) === u.birthday.slice(5));
+  const myBday = isBday(me), theirBday = !myBday && isBday(other); const bdUser = myBday ? me : theirBday ? other : null;
+  const myGift = myBday && D.presents().find(p => p.forUser === me.id && p.date === todayIn(me));
+  const theirGift = theirBday && Store.all('presents').find(p => p.fromUser === me.id && p.forUser === other.id && p.date === todayIn(other));
+  const soonDate = !bdUser && other && other.birthday ? D.nextBirthday(other, todayIn(other)) : ''; const soon = soonDate ? daysBetween(todayIn(other), soonDate) : null;
+  const soonGift = soon != null && soon <= 7 && Store.all('presents').find(p => p.fromUser === me.id && p.forUser === other.id && p.date === soonDate);
+  const palSide = u => u && ((u.pal === 'bunny') ? 'l' : 'r');
+  const deco = bdUser ? (() => { const hs = palSide(bdUser); const giver = myBday ? other : me; const gs = palSide(giver); const gift = myBday ? myGift : theirGift;
+    return `<i class="hat ${hs}" style="${hs === 'l' ? 'left' : 'right'}:${42 + px}px"></i>${gift ? `<button class="gift ${gs}" style="${gs === 'l' ? 'left' : 'right'}:${86 + px}px" data-act="${myBday ? 'openPresent|' + gift.id : 'presentFor|' + other.id + ',' + gift.date}" aria-label="Present"></button>` : ''}`; })() : '';
   app.innerHTML = `<div class="screen">
     <div class="sides" id="sides">
       ${[L,R].map((u,i) => u ? `<div class="side ${i?'r':''} ${u.id===me.id?'me':''}"><span class="d">${u.id===me.id && !i ? `<button data-go="profile"><i class="pal ${u.pal}"></i></button> ` : ''}${sameCity && i ? '' : dateIn(u, now) + ' · ' + timeIn(u, now)} <span id="wx-${u.id}"></span>${u.id===me.id && i ? ` <button data-go="profile"><i class="pal ${u.pal}"></i></button>` : ''}</span><span class="c">${sameCity && i ? esc(me.name) + ' &amp; ' + esc(other.name) : esc(u.city)}</span></div>` : '').join('')}
@@ -211,13 +244,15 @@ function renderHome(app){
     <div class="meet">
       <button class="track" data-go="chat" style="height:12px;bottom:3px;background:transparent"><span style="display:block;height:1px;background:var(--ln);margin-top:5px"></span></button><button class="chatlink" data-go="chat">Chat ›</button><div class="tick" style="left:24px"></div><div class="tick" style="left:50%"></div><div class="tick" style="right:24px"></div>
       ${other && theirMode !== myMode && !sameCity ? `<div class="halo" style="${me.pal==='bunny'?'right':'left'}:-10px;background:${glow[theirMode]};opacity:.75"></div>` : ''}
-      ${bub(me.pal==='bunny'?mine:theirs, 'l')}${bub(me.pal==='bunny'?theirs:mine, 'r')}
+      ${bub(me.pal==='bunny'?mine:theirs, 'l')}${bub(me.pal==='bunny'?theirs:mine, 'r')}${deco}
       <button data-act="bubble|${me.pal==='bunny'?me.id:(other?other.id:'')}"><i class="pal lg bunny" style="transform:translateX(${px}px)"></i></button>
       <button data-act="bubble|${me.pal==='puppy'?me.id:(other?other.id:'')}"><i class="pal lg puppy" style="transform:translateX(${-px}px) scaleX(-1)"></i></button>
     </div>
     ${!everBubbled ? '<div class="l center" style="margin-top:-8px">tap a pal to say or think something</div>' : ''}
-    ${anni ? `<div class="center"><div class="hd md">${months} Month${months===1?'':'s'}!</div><div class="sub">since ${fmtD(D.anniversary())}${t && !sameCity ? ' · ' + esc(t.city) + (days > 0 ? ' in ' + days + ' days' : ' today') : ''}</div></div>` : t ? `<div class="center"><div class="hd md">${sameCity ? 'Together' : esc(t.city)}</div><div class="sub">${sameCity ? esc(t.city) + ' · day ' + (daysBetween(t.start, today())+1) + ' of ' + (daysBetween(t.start,t.end)+1) : fmtD(t.start) + (days > 0 ? ' · ' + days + ' days' : ' · today') + (t.flyer ? ' · ' + esc((D.user(t.flyer)||{}).name||'') + ' flies' : '')}</div></div>` : `<div class="center"><div class="hd md">No trip yet</div><div class="sub" style="margin-top:8px">Add one in Trips</div></div>`}
+    ${bdUser ? `<div class="conf">${Array.from({length:24}, (_, i) => `<i style="left:${6 + (i*37)%88}%;top:${(i*53)%26}%;background:${['#F2B8C6','#F6E39A','#B9D3C9','#C4D4E6'][i%4]};transform:rotate(${i*41}deg)"></i>`).join('')}</div>` : ''}
+    ${bdUser ? `<div class="center"><div class="hd md">${myBday ? 'Happy birthday, ' + esc(me.name) + '!' : esc(other.name) + '\'s birthday!'}</div><div class="sub">${myBday ? (myGift ? (myGift.openedAt ? 'from ' + esc(other.name) + ' ♡' : 'from ' + esc(other.name) + ' · tap your present') : '') : theirGift ? (theirGift.openedAt ? 'your present was opened ♡' : 'your present is waiting') : `<button class="l" data-act="presentFor|${other.id},${todayIn(other)}">wrap a present ›</button>`}${anni ? (myGift || theirGift || !myBday ? ' · ' : '') + months + ' Month' + (months===1?'':'s') : ''}</div>${myBday ? `<button class="chip" style="margin-top:10px;font-size:12px" data-act="wishSheet">Make a wish</button>` : ''}</div>` : anni ? `<div class="center"><div class="hd md">${months} Month${months===1?'':'s'}!</div><div class="sub">since ${fmtD(D.anniversary())}${t && !sameCity ? ' · ' + esc(t.city) + (days > 0 ? ' in ' + days + ' days' : ' today') : ''}</div></div>` : t ? `<div class="center"><div class="hd md">${sameCity ? 'Together' : esc(t.city)}</div><div class="sub">${sameCity ? esc(t.city) + ' · day ' + (daysBetween(t.start, today())+1) + ' of ' + (daysBetween(t.start,t.end)+1) : fmtD(t.start) + (days > 0 ? ' · ' + days + ' days' : ' · today') + (t.flyer ? ' · ' + esc((D.user(t.flyer)||{}).name||'') + ' flies' : '')}</div></div>` : `<div class="center"><div class="hd md">No trip yet</div><div class="sub" style="margin-top:8px">Add one in Trips</div></div>`}
     ${flightDay ? flightCard(flightDay) : t ? `<button class="glass tap" data-go="trip/${t.id}"><div class="row"><span class="l">Upcoming trip</span><span class="l">of ~${money(plan)}</span></div><div class="row" style="margin-top:8px"><span class="num">${money(cost.total)}</span><span class="sub">${cost.total <= plan ? 'on track' : 'a bit over'}</span></div></button>` : ''}
+    ${soon != null && soon >= 1 && soon <= 7 ? `<button class="glass pill row tap" style="display:flex" data-act="birthdaySheet|${other.id},${soonDate}"><span class="l">${esc(other.name)}'s birthday ${soon === 1 ? 'tomorrow' : 'in ' + soon + ' days'}</span><span style="font-size:13px;font-weight:500">${soonGift ? 'present wrapped ✓' : 'wrap a present ›'}</span></button>` : ''}
     <button class="glass pill row tap" style="display:flex" data-go="between"><span class="l">${MONTHS[now.getMonth()]} budget</span><span style="font-size:13px;font-weight:500">${money(D.envelopeMonthly())}</span></button>
     <div class="l">Recent memories</div>
     <div class="feed" style="margin-top:-8px">${recent.length ? recent.map(momentRow).join('') : '<div class="empty">Nothing yet. Tap + to add a moment.</div>'}</div>
@@ -226,7 +261,7 @@ function renderHome(app){
 }
 function momentRow(m){
   const ph = m.photos && m.photos[0];
-  return `<button class="mo" data-go="day/${m.tripId ? m.tripId + '_' + m.date : 'none_' + m.date}"><div class="th">${ph ? `<img data-asset="${ph.asset}" alt="">` : ''}</div><div><div class="t">${esc(m.text || m.title || (m.voice ? 'Voice note' : m.song ? 'A song' : 'Photo'))}</div><div class="m l">${fmtD(m.date)}${m.tripId && D.trip(m.tripId) ? ' · ' + esc(D.trip(m.tripId).city) : ''} · ${palOf(m.authorId)}${m.cost && m.cost.amount ? ' ' + money(m.cost.amount) : ''}${m.voice ? ' ' + fmtDur(m.voiceDur) : ''}</div></div></button>`;
+  return `<button class="mo" data-go="day/${m.tripId ? m.tripId + '_' + m.date : 'none_' + m.date}"><div class="th">${ph ? `<img data-asset="${ph.asset}" alt="">` : ''}</div><div><div class="t">${esc(m.text || m.title || (D.voices(m).length ? 'Voice note' : D.songs(m).length ? (D.songs(m)[0].title || 'A song') : (m.photos||[]).length ? 'Photo' : D.costLines(m).length ? (D.costLines(m)[0].label || 'A cost') : 'Memory'))}</div><div class="m l">${fmtD(m.date)}${m.tripId && D.trip(m.tripId) ? ' · ' + esc(D.trip(m.tripId).city) : ''} · ${palOf(m.authorId)}${D.costTotal(m) ? ' ' + money(D.costTotal(m)) : ''}${D.voices(m).length ? ' ' + D.voices(m).map(v => fmtDur(v.dur)).join(' · ') : ''}</div></div></button>`;
 }
 const ordinal = n => n + (n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th');
 const fmtDur = s => s ? Math.floor(s/60) + ':' + String(Math.round(s%60)).padStart(2,'0') : '';
@@ -306,11 +341,11 @@ function renderTrip(app){
   const photos = ms.flatMap(m => (m.photos||[]).map(ph => Object.assign({ m }, ph)));
   const nDays = daysBetween(t.start, t.end) + 1, dayN = daysBetween(t.start, today()) + 1;
   const stage = today() < t.start ? `${daysBetween(today(), t.start)} days away` : today() > t.end ? 'Done' : `Day ${dayN} of ${nDays}`;
-  const meals = ms.filter(m => m.cost && m.cost.tag === 'food').length, mm = ms.filter(m => m.kind !== 'booking');
+  const meals = ms.filter(m => D.costLines(m).some(c => c.tag === 'food')).length, mm = ms.filter(m => m.kind !== 'booking');
   const todayPlan = ms.find(m => m.kind === 'plan' && m.date === today());
   const style = D.settings().photoStyle;
   app.innerHTML = `<div class="screen"><div class="bar"><button data-go="trips">‹ Trips</button><span>${stage}</span></div><h1 class="hd">${esc(t.city)}</h1>
-    ${style === 'polaroid' ? `<div class="polas">${photos.slice(0,2).map(ph => polaroid(ph, ph.m, false)).join('')}<button class="pola empty" data-act="newMoment|${t.id}"><div class="ph">+</div></button></div>` : `<div class="clean">${photos.slice(0,3).map(ph => `<div class="ph"><img data-asset="${ph.asset}" alt=""></div>`).join('')}<button class="ph" style="display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:300;color:var(--mu)" data-act="newMoment|${t.id}">+</button></div>`}
+    ${style === 'polaroid' ? `<div class="polas">${photos.slice(0,2).map(ph => polaroid(D.moments().find(x => x.id === ph.m.id).photos.find(p => p.asset === ph.asset), ph.m, false, 'trip:' + t.id)).join('')}<button class="pola empty" data-act="newMoment|${t.id}"><div class="ph">+</div></button></div>` : `<div class="clean">${photos.slice(0,3).map(ph => `<button class="ph" data-act="viewPh|trip:${t.id},${ph.m.id},${ph.m.photos.findIndex(p => p.asset === ph.asset)}"><img data-asset="${ph.asset}" alt=""></button>`).join('')}<button class="ph" style="display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:300;color:var(--mu)" data-act="newMoment|${t.id}">+</button></div>`}
     <div class="stats"><div><b>${Math.min(nDays, Math.max(0, today() > t.end ? nDays : dayN))}</b><span class="l">days</span></div><div><b>${meals}</b><span class="l">meals</span></div><div><b>${mm.length}</b><span class="l">moments</span></div></div>
     <div class="tiles"><button data-go="days/${t.id}"><b>Days</b><span>${todayPlan ? esc(todayPlan.title||todayPlan.text) : nDays + ' days'}</span></button><button data-go="budget/${t.id}"><b>Budget</b><span>${money(c.total)} of ~${money(p)}</span></button><button data-go="photos/${t.id}"><b>Photos</b><span>${photos.length}</span></button></div>
     <div class="list" style="font-size:13.5px;margin-top:-4px"><button class="row" data-go="moments/${t.id}"><span>All moments</span><span class="l">${mm.length} ›</span></button><button class="row" data-go="emails/${t.id}"><span>Add a booking from an email</span><span class="l">›</span></button><button class="row" data-act="exportTrip|${t.id}"><span>Export</span><span class="l">›</span></button><button class="row" data-act="editTrip|${t.id}"><span>Edit trip</span><span class="l">›</span></button></div>
@@ -320,7 +355,7 @@ ACT.editTrip = id => { const t = D.trip(id); const users = D.users(); openSheet(
 ACT.updateTrip = async id => { const t = D.trip(id); Object.assign(t, { city: $('#t-city').value.trim(), start: $('#t-start').value, end: $('#t-end').value, flyer: sheet.sh.dataset['tFlyer'] }); await Store.put('trips', t); closeSheet(); render(); };
 ACT.deleteTrip = async id => { if (!await ask('Delete this trip and its moments?', { ok: 'Delete' })) return; for (const m of D.tripMoments(id)) await Store.remove(m.id); await Store.remove(id); closeSheet(); toast('Trip deleted'); go('trips'); };
 // "Des lands 4:10 pm" / "Des flies home 9:00 am" for a flight booking, judged against the other flights in its trip
-function payerPals(m){ const c = m.cost || {}; if (c.paidBy === 'both') return `<span class="pair">${D.users2().map(u => `<i class="pal ${u.pal}"></i>`).join('')}</span>`; return palOf(c.paidBy); }
+function payerPals(c){ c = c || {}; if (c.paidBy === 'both') return `<span class="pair">${D.users2().map(u => `<i class="pal ${u.pal}"></i>`).join('')}</span>`; return palOf(c.paidBy); }
 // A trip is a visit: the first flight in it "lands", the last one "flies home".
 // Connecting legs on the same day: only the final arrival / first departure gets the label.
 function flightInfo(m){
@@ -347,66 +382,114 @@ function renderDays(app){
   app.innerHTML = `<div class="screen"><div class="bar"><button data-go="trip/${t.id}">‹ ${esc(t.city)}</button><span>${fmtD(t.start)} – ${fmtD(t.end)}</span></div><h1 class="hd">Days</h1><div class="days">${rows}</div><div class="glass row mt-auto"><span class="l">So far</span><span class="num" style="font-size:20px">${money(c.total)}</span></div></div>${nav('trips')}`;
 }
 function renderBudget(app){
-  const t = D.trip(route.id), c = D.tripCost(t), plan = D.tripPlan(t), P = D.planTotal(t); const [a, b] = D.users2(); const cats = D.cats(t);
-  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="trip/${t.id}">‹ ${esc(t.city)}</button><span>${fmtD(t.start)} – ${fmtD(t.end)}</span></div><h1 class="hd">Budget</h1>
+  const t = D.trip(route.id); if (!t) return go('trips'); const c = D.tripCost(t), plan = D.tripPlan(t), P = D.planTotal(t); const [a, b] = D.users2(); const cats = D.cats(t); const occ = !!t.occasion;
+  const bdayFor = occ && t.kind === 'birthday' ? D.user(t.forUser) : null; const myPresent = bdayFor && Store.all('presents').find(p => p.fromUser === D.me().id && p.forUser === bdayFor.id && p.date === t.bday);
+  app.innerHTML = `<div class="screen"><div class="bar">${occ ? `<button data-go="between">‹ Between visits</button>` : `<button data-go="trip/${t.id}">‹ ${esc(t.city)}</button>`}<span>${fmtD(t.start)}${t.end !== t.start ? ' – ' + fmtD(t.end) : ''}</span></div><h1 class="hd">${occ ? esc(t.city) : 'Budget'}</h1>${occ ? `<div class="l" style="margin-top:-10px">Occasion${t.secret ? ' · hidden from ' + esc((D.other()||{}).name||'them') : ''}</div>` : ''}
     <div class="glass"><div class="row"><div><div class="l">Actual</div><div class="num">${money(c.total)}</div></div><div style="text-align:right"><div class="l">Planned</div><div class="num" style="color:var(--mu)">${money(P)}</div></div></div></div>
     <div class="colhead"><span class="bcol"></span><span class="bamt">Actual</span><span class="bamt">Planned</span></div>
-    <div class="list" style="margin-top:-10px">${cats.map(cat => { const keys = cats.map(c => c.key); const ms = D.tripMoments(t.id).filter(m => m.cost && ((m.cost.tag||'other') === cat.key || (cat.key === 'fun' && !keys.includes(m.cost.tag||'other')))); const byA = ms.reduce((s,m)=>s+D.share(m, a.id),0), byB = ms.reduce((s,m)=>s+D.share(m, b.id),0); return `<button class="row" data-go="cat/${t.id}_${cat.key}"><span>${esc(cat.label)}</span><span style="display:flex;gap:14px;align-items:center"><span class="bcol">${byA?`<i class="pal ${a.pal}"></i>`:''}${byB?`<i class="pal ${b.pal}"></i>`:''}</span><span class="bamt">${byA+byB ? money(byA+byB) : '<span class="l">—</span>'}</span><span class="bamt l">${money(plan[cat.key]||0)}</span></span></button>`; }).join('')}</div>
+    <div class="list" style="margin-top:-10px">${cats.map(cat => { const keys = cats.map(c => c.key); const fallback = t.occasion ? 'fun' : 'fun'; const ls = D.tripLines(t).filter(c => (c.tag||'other') === cat.key || (cat.key === fallback && !keys.includes(c.tag||'other'))); const byA = ls.reduce((s,c)=>s+D.shareOf(c, a.id),0), byB = ls.reduce((s,c)=>s+D.shareOf(c, b.id),0); return `<button class="row" data-go="cat/${t.id}_${cat.key}"><span>${esc(cat.label)}</span><span style="display:flex;gap:14px;align-items:center"><span class="bcol">${byA?`<i class="pal ${a.pal}"></i>`:''}${byB?`<i class="pal ${b.pal}"></i>`:''}</span><span class="bamt">${byA+byB ? money(byA+byB) : '<span class="l">—</span>'}</span><span class="bamt l">${money(plan[cat.key]||0)}</span></span></button>`; }).join('')}</div>
     <button class="row" style="font-size:13.5px;color:var(--mu)" data-act="catAdd|${t.id}"><span>+ Add a category</span><span></span></button>
-    <div class="l">Tap a category to see every memory in it, change its plan, or rename it.</div>
-    <button class="row" style="font-size:13.5px" data-act="exportXlsx|${t.id}"><span>Export to Excel</span><span class="l">›</span></button></div>${nav('trips')}`;
+    ${bdayFor ? `<button class="row" style="font-size:13.5px" data-act="presentFor|${bdayFor.id},${t.bday}"><span>${esc(bdayFor.name)}'s present</span><span class="l">${myPresent ? 'wrapped · opens ' + fmtD(t.bday) : 'wrap one'} ›</span></button>` : ''}
+    ${occ ? `<button class="row" style="font-size:13.5px" data-act="newMoment|${t.id},${t.start > today() ? t.start : (t.end < today() ? t.end : today())}"><span>+ Add a cost</span><span class="l">›</span></button><button class="row" style="font-size:13.5px" data-act="occEdit|${t.id}"><span>Edit occasion</span><span class="l">›</span></button>` : ''}
+    <button class="row" style="font-size:13.5px" data-act="exportXlsx|${t.id}"><span>Export to Excel</span><span class="l">›</span></button></div>${nav(occ ? '' : 'trips')}`;
 }
 function renderCategory(app){
-  const [tripId, key] = route.id.split('_'); const t = D.trip(tripId); if (!t) return go('trips'); const label = D.catLabel(t, key); const plan = D.tripPlan(t);
-  const keys = D.cats(t).map(c => c.key); const ms = D.tripMoments(t.id).filter(m => m.cost && ((m.cost.tag||'other') === key || (key === 'fun' && !keys.includes(m.cost.tag||'other')))).sort((x,y) => y.date.localeCompare(x.date)); const total = ms.reduce((s,m) => s + +m.cost.amount, 0);
-  const byDay = {}; ms.forEach(m => (byDay[m.date] = byDay[m.date] || []).push(m));
+  const [tripId, key] = route.id.slice(0, route.id.lastIndexOf('_')) ? [route.id.slice(0, route.id.indexOf('_')), route.id.slice(route.id.indexOf('_') + 1)] : route.id.split('_'); const t = D.trip(tripId); if (!t) return go('trips'); const label = D.catLabel(t, key); const plan = D.tripPlan(t);
+  const keys = D.cats(t).map(c => c.key); const ms = D.tripLines(t).filter(c => (c.tag||'other') === key || (key === 'fun' && !keys.includes(c.tag||'other'))).sort((x,y) => y.m.date.localeCompare(x.m.date)); const total = ms.reduce((s,c) => s + +c.amount, 0);
+  const byDay = {}; ms.forEach(c => (byDay[c.m.date] = byDay[c.m.date] || []).push(c));
   app.innerHTML = `<div class="screen"><div class="bar"><button data-go="budget/${t.id}">‹ Budget</button><span>${esc(t.city)}</span></div><h1 class="hd">${esc(label)}</h1>
     <div class="glass"><div class="row"><div><div class="l">Actual</div><div class="num">${money(total)}</div></div><div style="text-align:right"><div class="l">Planned</div><div class="num" style="color:var(--mu)">${money(plan[key]||0)}</div></div></div>
       ${(() => { const c = D.planCfg(t, key); const [a, b] = D.users2(); const units = D.planUnits(t, key); const unit = key === 'stay' ? 'night' : 'day'; const inp = (id, v) => `<input class="in" type="number" inputmode="decimal" id="pl-${id}" data-act="planCfgEdit|${t.id},${key}" data-on="change" value="${v||''}" placeholder="0" style="width:74px;padding:6px 8px;font-size:13px;text-align:right">`; return `<div class="row" style="margin-top:12px;gap:8px"><div class="seg" style="width:150px"><button class="${c.mode==='total'?'on':''}" data-act="planCfgSet|${t.id},${key},mode,total">Total</button><button class="${c.mode==='day'?'on':''}" data-act="planCfgSet|${t.id},${key},mode,day">Per ${unit}</button></div><div class="seg" style="width:120px"><button class="${c.who==='both'?'on':''}" data-act="planCfgSet|${t.id},${key},who,both">Both</button><button class="${c.who==='each'?'on':''}" data-act="planCfgSet|${t.id},${key},who,each">Each</button></div></div><div class="row" style="margin-top:8px"><span class="l">${c.mode==='day' ? `$${c.who==='each' ? ((+c.a||0)+(+c.b||0)) : (+c.a||0)}/${unit}${c.who==='each' ? ' together' : ''} · ${units} ${unit}${units===1?'':'s'}` : c.who==='each' ? 'together' : ''}</span><span style="display:flex;gap:6px;align-items:center">${c.who==='each' ? `<i class="pal ${a.pal}"></i>${inp('a', c.a)}<i class="pal ${b.pal}" style="margin-left:4px"></i>${inp('b', c.b)}` : `$${inp('a', c.a)}`}</span></div></div>`; })()}
-    <div class="list" style="font-size:13.5px;margin-top:-4px"><button class="row" data-go="emails/${t.id}"><span>Add a booking from an email</span><span class="l">›</span></button></div>
-    ${Object.keys(byDay).map(d => `<div class="l">${fmtD(d)}</div><div class="list" style="margin-top:-8px">${byDay[d].map(m => `<button class="row" data-act="editMoment|${m.id}"><div style="text-align:left"><div style="font-weight:500">${esc(m.text||m.title||'Memory')}</div><div class="l">${payerPals(m)} ${esc(D.payerText(m))}</div></div><span>${money2(m.cost.amount)}</span></button>`).join('')}</div>`).join('') || '<div class="empty">Nothing here yet.</div>'}
-    <div class="row mt-auto"><span class="l">${ms.length} memor${ms.length===1?'y':'ies'}</span><span style="display:flex;gap:6px"><button class="btn sm lite" data-act="catRename|${t.id},${key}">Rename</button><button class="btn sm lite" data-act="catRemove|${t.id},${key}">Remove</button><button class="btn sm" data-act="newMomentCat|${t.id},${key}">+ Add</button></span></div>
+    ${t.occasion ? '' : `<div class="list" style="font-size:13.5px;margin-top:-4px"><button class="row" data-go="emails/${t.id}"><span>Add a booking from an email</span><span class="l">›</span></button></div>`}
+    ${Object.keys(byDay).map(d => `<div class="l">${fmtD(d)}</div><div class="list" style="margin-top:-8px">${byDay[d].map(c => `<button class="row" data-act="${c.m.flight ? 'editFlight' : 'editMoment'}|${c.m.id}"><div style="text-align:left"><div style="font-weight:500">${esc(c.label || (c.m.flight ? flightLabel(c.m) : '') || c.m.text || c.m.title || 'Memory')}</div><div class="l">${payerPals(c)} ${esc(D.payerTextC(c))}${c.label && c.m.text ? ' · ' + esc(c.m.text) : ''}</div></div><span>${money2(c.amount)}</span></button>`).join('')}</div>`).join('') || '<div class="empty">Nothing here yet.</div>'}
+    <div class="row mt-auto"><span class="l">${ms.length} item${ms.length===1?'':'s'}</span><span style="display:flex;gap:6px"><button class="btn sm lite" data-act="catRename|${t.id},${key}">Rename</button><button class="btn sm lite" data-act="catRemove|${t.id},${key}">Remove</button><button class="btn sm" data-act="newMomentCat|${t.id},${key}">+ Add</button></span></div>
   </div>${nav('trips')}`;
 }
 ACT.catAdd = async id => { const t = D.trip(id); const name = await ask('Name the category', { input: '', ok: 'Add' }); if (!name) return; const key = 'c_' + name.toLowerCase().replace(/[^a-z0-9]+/g,'_'); t.cats = (t.cats||[]).filter(c => c.key !== key).concat([{ key, label: name }]); await Store.put('trips', t); render(); };
 ACT.catRename = async arg => { const [id, key] = arg.split(','); const t = D.trip(id); const name = await ask('Rename', { input: D.catLabel(t, key), ok: 'Save' }); if (!name) return; const c = (t.cats||[]).find(c => c.key === key); if (c) c.label = name; else { t.catNames = Object.assign({}, t.catNames, { [key]: name }); } await Store.put('trips', t); render(); };
-ACT.catRemove = async arg => { const [id, key] = arg.split(','); const t = D.trip(id); const n = D.tripMoments(id).filter(m => m.cost && m.cost.tag === key).length; if (!await ask('Remove this category?', { sub: n ? `${n} memor${n===1?'y':'ies'} will move to "Fun".` : '', ok: 'Remove' })) return; for (const m of D.tripMoments(id)) if (m.cost && m.cost.tag === key) { m.cost.tag = 'fun'; await Store.put('moments', m); } if ((t.cats||[]).some(c => c.key === key)) t.cats = t.cats.filter(c => c.key !== key); else t.hidden = (t.hidden||[]).concat([key]); await Store.put('trips', t); go('budget', { id }); };
-ACT.newMomentCat = arg => { const [id, key] = arg.split(','); const t = D.trip(id); const date = today() >= t.start && today() <= t.end ? today() : t.start; momentSheet({ tripId: id, date, cost: { amount: '', paidBy: D.me().id, tag: key } }); };
+ACT.catRemove = async arg => { const [id, key] = arg.split(','); const t = D.trip(id); const n = D.tripLines(t).filter(c => c.tag === key).length; const fb = t.occasion ? 'fun' : 'fun'; if (!await ask('Remove this category?', { sub: n ? `${n} cost${n===1?'':'s'} will move to "${D.catLabel(t, fb)}".` : '', ok: 'Remove' })) return; const changed = []; for (const m of D.tripMoments(id)) { let ch = false; if (m.cost && m.cost.tag === key) { m.cost.tag = fb; ch = true; } (m.items||[]).forEach(it => { if (it.type === 'cost' && it.tag === key) { it.tag = fb; ch = true; } }); if (ch) changed.push(m); } await Store.putMany('moments', changed); if ((t.cats||[]).some(c => c.key === key)) t.cats = t.cats.filter(c => c.key !== key); else t.hidden = (t.hidden||[]).concat([key]); await Store.put('trips', t); go('budget', { id }); };
+ACT.newMomentCat = arg => { const [id, key] = arg.split(','); const t = D.trip(id); const date = today() >= t.start && today() <= t.end ? today() : t.start; momentSheet({ tripId: id, date, items: [{ type: 'cost', label: '', amount: '', paidBy: D.me().id, tag: key }] }, false, { openCost: true }); };
 ACT.planCfgSet = async arg => { const [id, k, f, v] = arg.split(','); const t = D.trip(id); const c = Object.assign({}, D.planCfg(t, k)); const units = D.planUnits(t, k); if (f === 'mode' && v !== c.mode) { const conv = x => v === 'day' ? Math.round((+x||0) / units) : Math.round((+x||0) * units); c.a = conv(c.a); c.b = conv(c.b); } if (f === 'who' && v !== c.who) { if (v === 'each') { c.a = Math.round((+c.a||0) / 2); c.b = c.a; } else { c.a = (+c.a||0) + (+c.b||0); c.b = 0; } } c[f] = v; t.planCfg = Object.assign({}, t.planCfg, { [k]: c }); await Store.put('trips', t); render(); };
 ACT.planCfgEdit = async arg => { const [id, k] = arg.split(','); const t = D.trip(id); const c = Object.assign({}, D.planCfg(t, k)); const a = $('#pl-a'), b = $('#pl-b'); if (a) c.a = +a.value || 0; if (b) c.b = +b.value || 0; t.planCfg = Object.assign({}, t.planCfg, { [k]: c }); await Store.put('trips', t); render(); };
 function renderPhotos(app){
   const t = D.trip(route.id); const ms = D.tripMoments(t.id).filter(m => m.photos && m.photos.length); const byDay = {}; ms.forEach(m => (byDay[m.date] = byDay[m.date] || []).push(...m.photos.map(p => ({ p, m }))));
   const days = Object.keys(byDay).sort().reverse();
-  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="trip/${t.id}">‹ ${esc(t.city)}</button><span>${fmtD(t.start)} – ${fmtD(t.end)}</span></div><h1 class="hd">Photos</h1>${days.length ? days.map(d => `<div class="l">${fmtD(d)}</div><div class="pgrid" style="margin-top:-8px">${byDay[d].map(({p, m}) => `<button data-go="day/${t.id}_${d}"><img data-asset="${p.asset}" alt=""></button>`).join('')}</div>`).join('') : '<div class="empty">No photos yet.</div>'}</div>${nav('trips')}`;
+  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="trip/${t.id}">‹ ${esc(t.city)}</button><span>${fmtD(t.start)} – ${fmtD(t.end)}</span></div><h1 class="hd">Photos</h1>${days.length ? days.map(d => `<div class="l">${fmtD(d)}</div><div class="pgrid" style="margin-top:-8px">${byDay[d].map(({p, m}) => `<button data-act="viewPh|trip:${t.id},${m.id},${m.photos.indexOf(p)}"><img data-asset="${p.asset}" alt=""></button>`).join('')}</div>`).join('') : '<div class="empty">No photos yet.</div>'}</div>${nav('trips')}`;
 }
 function renderMoments(app){ const t = D.trip(route.id); const ms = D.tripMoments(t.id).filter(m => m.kind !== 'booking').reverse(); app.innerHTML = `<div class="screen"><div class="bar"><button data-go="trip/${t.id}">‹ ${esc(t.city)}</button><span>${ms.length} moments</span></div><h1 class="hd">Moments</h1><div class="feed">${ms.map(momentRow).join('') || '<div class="empty">Nothing yet.</div>'}</div></div>${nav('trips')}`; }
 
 // ---------- day page ----------
-function polaroid(ph, m, draggable){
+function polaroid(ph, m, draggable, scope){
   const idx = m.photos.indexOf(ph); const stickers = (ph.stickers||[]).map((s,i) => `<i class="stk ${s.pal}" data-stk="${m.id},${idx},${i}" style="left:${s.x}px;top:${s.y}px;transform:rotate(${s.rot||0}deg)"></i>`).join('');
-  return `<div class="pola" data-pola="${m.id},${idx}" style="transform:rotate(${(idx%2?4:-4)}deg)"><div class="ph"><img data-asset="${ph.asset}" alt=""></div><span class="dt">${palOf(m.authorId)} ${m.date.replace(/-/g,' · ').slice(5)} · ${m.date.slice(2,4)}</span>${stickers}</div>`;
+  return `<div class="pola" data-pola="${m.id},${idx}" data-view="${scope || 'day:' + (m.tripId || 'none') + '_' + m.date},${m.id},${idx}" style="transform:rotate(${(idx%2?4:-4)}deg)"><div class="ph"><img data-asset="${ph.asset}" alt=""></div><span class="dt">${ph.caption ? esc(ph.caption) : palOf(m.authorId) + ' ' + m.date.replace(/-/g,' · ').slice(5) + ' · ' + m.date.slice(2,4)}</span>${stickers}</div>`;
 }
 function renderDay(app){
   const [tripId, date] = route.id.split('_'); const t = tripId !== 'none' ? D.trip(tripId) : null;
   const ms = D.moments().filter(m => m.date === date && (t ? m.tripId === t.id : !m.tripId)).sort((a,b) => a.createdAt - b.createdAt);
   const plan = ms.find(m => m.kind === 'plan'); const photos = ms.flatMap(m => (m.photos||[]).map(p => ({ p, m })));
-  const cost = ms.reduce((s,m) => s + (m.cost ? +m.cost.amount : 0), 0), meals = ms.filter(m => m.cost && m.cost.tag === 'food').length;
+  const cost = ms.reduce((s,m) => s + D.costTotal(m), 0), meals = ms.filter(m => D.costLines(m).some(c => c.tag === 'food')).length;
   const style = D.settings().photoStyle;
-  const anni = D.isMonthiversary(date), months = anni ? D.monthsSince(date) : 0;
+  const anni = D.isMonthiversary(date), months = anni ? D.monthsSince(date) : 0; const bds = D.birthdaysOn(date);
   const other23 = anni ? D.moments().filter(m => D.isMonthiversary(m.date) && m.date !== date && m.photos && m.photos.length).sort((a,b) => b.date.localeCompare(a.date)).slice(0,5) : [];
-  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="${t ? 'days/' + t.id : 'calendar'}">‹ ${t ? esc(t.city) : 'Calendar'}</button><span>${fmtDow(date)}</span></div><h1 class="hd" style="font-size:34px">${anni ? `${months} month${months===1?'':'s'} <i class="heart lg"></i>` : plan ? esc(plan.title||plan.text) + (plan.who && plan.who !== 'both' ? ' ' + palOf(plan.who) : '') : fmtD(date)}</h1>${anni ? `<div class="sub" style="margin-top:-6px">since ${fmtD(D.anniversary())}${plan ? ' · ' + esc(plan.title||plan.text) : ''}</div>` : plan && plan.note ? `<div class="sub">${esc(plan.note)}</div>` : ''}
+  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="${t ? (t.occasion ? 'budget/' : 'days/') + t.id : 'calendar'}">‹ ${t ? esc(t.city) : 'Calendar'}</button><span>${fmtDow(date)}</span></div><h1 class="hd" style="font-size:34px">${bds.length && !plan ? bds.map(u => u.id === D.me().id ? 'Your birthday' : esc(u.name) + '\'s birthday').join(' & ') : anni ? `${months} month${months===1?'':'s'} <i class="heart lg"></i>` : plan ? esc(plan.title||plan.text) + (plan.who && plan.who !== 'both' ? ' ' + palOf(plan.who) : '') : fmtD(date)}</h1>${anni ? `<div class="sub" style="margin-top:-6px">since ${fmtD(D.anniversary())}${plan ? ' · ' + esc(plan.title||plan.text) : ''}</div>` : plan && plan.note ? `<div class="sub">${esc(plan.note)}</div>` : ''}
     ${anni ? `<div class="l">Other ${ordinal(+date.slice(8))}s</div><div class="strip23" style="margin-top:-8px">${other23.map(m => `<button data-go="day/${m.tripId||'none'}_${m.date}"><div class="ph"><img data-asset="${m.photos[0].asset}" alt=""></div><span class="l">${MON[parseDate(m.date).getMonth()]} · ${D.monthsSince(m.date)}</span></button>`).join('')}${(() => { const nd = new Date(parseDate(date)); nd.setMonth(nd.getMonth()+1); const ni = isoDate(nd); return `<button data-go="day/none_${ni}"><div class="ph empty"></div><span class="l">${MON[nd.getMonth()]} · ${D.monthsSince(ni)}</span></button>`; })()}</div>` : ''}
-    ${photos.length ? style === 'polaroid' ? `<div class="polas">${photos.map(({p, m}) => polaroid(p, m, true)).join('')}</div><div class="stkrow"><span class="l">Stickers</span>${D.users().map(u => `<button data-act="addSticker|${u.pal}"><i class="pal ${u.pal}"></i></button>`).join('')}<span class="l">tap, then drag on a photo</span></div>` : `<div class="clean">${photos.map(({p}) => `<div class="ph"><img data-asset="${p.asset}" alt=""></div>`).join('')}</div>` : ''}
-    ${ms.filter(m => m.kind !== 'plan').map(m => `${m.voice ? `<div class="glass" style="padding:12px 14px"><div class="wave"><button class="play" data-act="play|${m.voice}"></button>${palOf(m.authorId)}<div class="bars">${Array.from({length:22},(_,i)=>`<i style="height:${30+((i*37)%60)}%"></i>`).join('')}</div><span class="l">${fmtDur(m.voiceDur)}</span><button class="l" data-act="shareAsset|${m.voice}">↑</button></div></div>` : ''}
-      ${m.song ? songCard(m) : ''}
-      ${m.text && m.kind !== 'booking' ? `<div class="caption">${palOf(m.authorId)}<p>${esc(m.text)}${m.cost && m.cost.amount ? ` <span class="l">${money2(m.cost.amount)}</span>` : ''}</p><button class="l" style="margin-left:auto" data-act="editMoment|${m.id}">edit</button></div>` : m.cost && m.cost.amount && m.kind !== 'booking' ? `<div class="caption">${palOf(m.authorId)}<p class="l">${money2(m.cost.amount)} · ${esc(D.catLabel(t, m.cost.tag))}</p><button class="l" style="margin-left:auto" data-act="editMoment|${m.id}">edit</button></div>` : ''}
-      ${m.kind === 'booking' ? `<div class="caption">${palOf(m.flight ? (m.flight.who || m.authorId) : m.authorId)}<p>${m.flight ? `${esc(flightLabel(m))} <span class="l">${esc(m.flight.no||'')} · ${esc(m.flight.from||'')} → ${esc(m.flight.to||'')}</span>` : esc(m.text)}${m.cost && m.cost.amount ? ` <span class="l">${money2(m.cost.amount)}</span>` : ''}</p><button class="l" style="margin-left:auto" data-act="editMoment|${m.id}">edit</button></div>` : ''}`).join('')}
+    ${photos.length ? style === 'polaroid' ? `<div class="polas">${photos.map(({p, m}) => polaroid(p, m, true)).join('')}</div><div class="stkrow"><span class="l">Stickers</span>${D.users().map(u => `<button data-act="addSticker|${u.pal}"><i class="pal ${u.pal}"></i></button>`).join('')}<span class="l">tap, then drag on a photo</span></div>` : `<div class="clean">${photos.map(({p, m}) => `<button class="ph" data-act="viewPh|day:${route.id},${m.id},${m.photos.indexOf(p)}"><img data-asset="${p.asset}" alt=""></button>`).join('')}</div>` : ''}
+    ${ms.filter(m => m.kind !== 'plan').map(m => dayBlock(m, t)).join('')}
     ${!ms.length ? '<div class="empty">Nothing here yet.</div>' : ''}
     <div class="row mt-auto"><span class="l">${ms.filter(m=>m.kind!=='plan').length} moments${meals ? ' · ' + meals + ' meal' + (meals>1?'s':'') : ''}${cost ? ' · ' + money(cost) : ''}</span><span style="display:flex;gap:6px">${!plan ? `<button class="btn sm lite" data-act="addPlan|${date}${t?','+t.id:''}">Plan</button>` : `<button class="btn sm lite" data-act="editPlan|${plan.id}">Edit plan</button>`}<button class="btn sm" data-act="newMoment|${t ? t.id : ''},${date}">+ Add</button></span></div>
   </div>${nav(t ? 'trips' : 'calendar')}`;
   setupStickerDrag(app);
 }
-function songCard(m){ const id = (m.song.match(/track\/([A-Za-z0-9]+)/)||[])[1]; return `<div class="glass" style="padding:12px 14px"><div class="row"><div class="who">${palOf(m.authorId)}<div><b style="font-size:13.5px;font-weight:500">${esc(m.songTitle || 'A song')}</b><div class="l">${esc(m.songBy || 'Spotify')}</div></div></div><a class="l" href="${esc(m.song)}" target="_blank" rel="noopener">♫ open</a></div>${id ? `<iframe class="embed" style="margin-top:10px" src="https://open.spotify.com/embed/track/${id}?theme=0" loading="lazy" allow="encrypted-media"></iframe>` : ''}</div>`; }
+function songCard(sg, by){ const id = ((sg.url||'').match(/track\/([A-Za-z0-9]+)/)||[])[1]; return `<div class="glass" style="padding:12px 14px"><div class="row"><div class="who">${palOf(by)}<div><b style="font-size:13.5px;font-weight:500">${esc(sg.title || 'A song')}</b><div class="l">${esc(sg.artist || 'Spotify')}</div></div></div><a class="l" href="${esc(sg.url)}" target="_blank" rel="noopener">♫ open</a></div>${id ? `<iframe class="embed" style="margin-top:10px" src="https://open.spotify.com/embed/track/${id}?theme=0" loading="lazy" allow="encrypted-media"></iframe>` : ''}</div>`; }
+const BARS = Array.from({length:22},(_,i)=>`<i style="height:${30+((i*37)%60)}%"></i>`).join('');
+function voiceCard(v){ return `<div class="glass" style="padding:12px 14px"><div class="wave"><button class="play" data-act="play|${v.asset}"></button>${palOf(v.by)}<div class="bars">${BARS}</div><span class="l">${fmtDur(v.dur)}</span><button class="l" data-act="shareAsset|${v.asset}">↑</button></div></div>`; }
+// one memory on the day page: voice notes, songs, the message with its costs, or a booking
+function dayBlock(m, t){
+  if (m.kind === 'booking') { const tot = D.costTotal(m); return `<div class="caption">${palOf(m.flight ? (m.flight.who || m.authorId) : m.authorId)}<p>${m.flight ? `${esc(flightLabel(m))} <span class="l">${esc(m.flight.no||'')} · ${esc(m.flight.from||'')} → ${esc(m.flight.to||'')}</span>` : esc(m.text)}${tot ? ` <span class="l">${money2(tot)}</span>` : ''}</p><button class="l" style="margin-left:auto" data-act="${m.flight ? 'editFlight' : 'editMoment'}|${m.id}">edit</button></div>`; }
+  const lines = D.costLines(m); const tot = D.costTotal(m);
+  const costTxt = lines.length > 1 ? ` <span class="l">${lines.map(c => esc(c.label || D.catLabel(t, c.tag)) + ' ' + money2(c.amount)).join(' · ')}</span>` : tot ? ` <span class="l">${money2(tot)}</span>` : '';
+  const cap = m.text ? `<div class="caption">${palOf(m.authorId)}<p>${esc(m.text)}${costTxt}</p><button class="l" style="margin-left:auto" data-act="editMoment|${m.id}">edit</button></div>`
+    : `<div class="caption">${palOf(m.authorId)}<p class="l">${lines.length ? lines.map(c => (c.label ? esc(c.label) + ' ' : '') + money2(c.amount) + ' · ' + esc(D.catLabel(t, c.tag))).join(' · ') : ''}</p><button class="l" style="margin-left:auto" data-act="editMoment|${m.id}">edit</button></div>`;
+  return D.voices(m).map(voiceCard).join('') + D.songs(m).map(sg => songCard(sg, m.authorId)).join('') + cap;
+}
+// ---------- photo viewer ----------
+let viewer = null;   // { list:[{mid, idx}], i }
+function viewerList(scope){ const [kind, key] = [scope.slice(0, scope.indexOf(':')), scope.slice(scope.indexOf(':') + 1)];
+  let ms = [];
+  if (kind === 'day') { const [tripId, date] = key.split('_'); ms = D.moments().filter(m => m.date === date && (tripId !== 'none' ? m.tripId === tripId : !m.tripId)); }
+  else if (kind === 'trip') ms = D.tripMoments(key);
+  else if (kind === 'm') ms = [Store.get('moments', key)].filter(Boolean);
+  ms = ms.slice().sort((a,b) => (a.date + String(a.createdAt||0).padStart(15,'0')).localeCompare(b.date + String(b.createdAt||0).padStart(15,'0')));
+  return ms.flatMap(m => (m.photos||[]).map((p, idx) => ({ mid: m.id, idx }))); }
+ACT.viewPh = arg => { const parts = arg.split(','); const idx = +parts.pop(), mid = parts.pop(), scope = parts.join(','); const list = viewerList(scope); const i = Math.max(0, list.findIndex(x => x.mid === mid && x.idx === idx)); viewer = { list: list.length ? list : [{ mid, idx }], i }; drawViewer(); };
+function drawViewer(keepText){
+  if (!viewer) return; const cur = viewer.list[viewer.i]; const m = cur && Store.get('moments', cur.mid); const p = m && m.photos[cur.idx];
+  if (!p) { viewer = null; closeSheet(); return render(); }
+  const me = D.me(); const t = m.tripId ? D.trip(m.tripId) : null; const cs = D.comments(m.id, p.asset); const typed = keepText ? ($('#v-cm') || {}).value || '' : ''; const capTyped = keepText && document.activeElement && document.activeElement.id === 'v-cap' ? document.activeElement.value : null; const focusId = keepText && document.activeElement ? document.activeElement.id : '';
+  openSheet(`<div class="vtop"><button data-act="vClose">‹ ${esc(m.text ? m.text.slice(0, 28) : fmtD(m.date))}</button><span>${viewer.list.length > 1 ? (viewer.i + 1) + ' of ' + viewer.list.length : ''}</span></div>
+    <div class="vimg ${p.polaroid ? 'pol' : ''}" id="v-img"><img data-asset="${p.asset}" alt=""></div>
+    ${viewer.list.length > 1 ? `<div class="vdots">${viewer.list.map((_, j) => `<i class="${j === viewer.i ? 'on' : ''}"></i>`).join('')}</div>` : ''}
+    <div class="vbody">
+      <input class="in vcap" id="v-cap" placeholder="Add a caption" value="${esc(capTyped != null ? capTyped : (p.caption||''))}" data-act="vCap" data-on="change">
+      <div class="l">${palOf(m.authorId)} ${esc((D.user(m.authorId)||{}).name||'')} · ${fmtDow(m.date)} ${MON[parseDate(m.date).getMonth()]}${t ? ' · ' + esc(t.city) : ''}</div>
+      <div class="cms">${cs.map(c => { const u = D.user(c.by) || {}; const mine = c.by === me.id; return `<div class="cm ${mine ? 'me' : ''}"><i class="pal ${u.pal||'bunny'}"></i><div><button class="bb" ${mine ? `data-act="vDelCm|${c.id}"` : ''}>${esc(c.text)}</button><div class="t">${esc(u.name||'')} · ${timeIn(me, new Date(c.at))}${isoDate(new Date(c.at)) !== today() ? ' · ' + fmtD(isoDate(new Date(c.at))) : ''}</div></div></div>`; }).join('')}</div>
+      <div class="row" style="gap:8px;margin-top:auto"><input class="in" id="v-cm" placeholder="Add a comment" value="${esc(typed)}" style="font-size:16px"><button class="btn sm" data-act="vSend">Send</button></div>
+      <div class="vact"><button data-act="vStickers">Stickers</button><button data-act="shareAsset|${p.asset}">Save to phone</button><button data-act="vDelete">Delete photo</button></div>
+    </div>`, sh => {
+      const img = sh.querySelector('#v-img'); let x0 = null;
+      img.addEventListener('touchstart', e => { x0 = e.touches[0].clientX; }, { passive: true });
+      img.addEventListener('touchend', e => { if (x0 == null) return; const dx = e.changedTouches[0].clientX - x0; x0 = null; if (Math.abs(dx) > 40) ACT.vGo(dx < 0 ? 1 : -1); });
+      img.addEventListener('click', e => { const r = img.getBoundingClientRect(); ACT.vGo(e.clientX > r.left + r.width / 2 ? 1 : -1); });
+      if (focusId) { const f = sh.querySelector('#' + focusId); if (f) f.focus(); }
+    }, 'viewer');
+}
+ACT.vGo = d => { if (!viewer) return; const n = viewer.list.length; if (n < 2) return; viewer.i = (viewer.i + d + n) % n; drawViewer(); };
+ACT.vClose = () => { viewer = null; closeSheet(); render(); };
+ACT.vCap = async (a, el) => { const cur = viewer.list[viewer.i]; const m = Store.get('moments', cur.mid); m.photos[cur.idx].caption = el.value.trim(); await Store.put('moments', m); };
+ACT.vSend = async () => { const el = $('#v-cm'); const text = el.value.trim(); if (!text) return; const cur = viewer.list[viewer.i]; const m = Store.get('moments', cur.mid); await Store.put('comments', { id: Store.uid(), mid: m.id, asset: m.photos[cur.idx].asset, by: D.me().id, text, at: Date.now() }); el.value = ''; drawViewer(); };
+ACT.vDelCm = async id => { if (!await ask('Delete this comment?', { ok: 'Delete' })) return; await Store.remove(id); drawViewer(true); };
+ACT.vStickers = () => { const cur = viewer.list[viewer.i]; const m = Store.get('moments', cur.mid); viewer = null; closeSheet(); go('day', { id: (m.tripId || 'none') + '_' + m.date }); toast('Tap a sticker, then the photo'); };
+ACT.vDelete = async () => { if (!await ask('Delete this photo?', { sub: 'It\'s removed for both of you.', ok: 'Delete' })) return; const cur = viewer.list[viewer.i]; const m = Store.get('moments', cur.mid); const [p] = m.photos.splice(cur.idx, 1); await Store.put('moments', m); if (p) { Store.removeBlob(p.asset); await Store.removeMany(Store.all('comments').filter(c => c.asset === p.asset).map(c => c.id)); } viewer.list = viewer.list.filter((x, j) => j !== viewer.i).map(x => x.mid === cur.mid && x.idx > cur.idx ? { mid: x.mid, idx: x.idx - 1 } : x); if (!viewer.list.length) return ACT.vClose(); viewer.i = Math.min(viewer.i, viewer.list.length - 1); drawViewer(); toast('Deleted'); };
 let audioEl;
 ACT.play = async (id, el) => { if (audioEl && !audioEl.paused && audioEl.dataset.id === id) { audioEl.pause(); el.classList.remove('on'); return; } const u = await Store.blobUrl(id); if (!u) return; if (audioEl) audioEl.pause(); document.querySelectorAll('.play.on').forEach(p => p.classList.remove('on')); audioEl = new Audio(u); audioEl.dataset.id = id; el.classList.add('on'); audioEl.onended = () => el.classList.remove('on'); audioEl.play(); };
 ACT.shareAsset = async id => { const b = await Store.blob(id); if (!b) return; const f = new File([b], id, { type: b.type }); if (navigator.canShare && navigator.canShare({ files:[f] })) return navigator.share({ files:[f] }); download(b, id); };
@@ -427,39 +510,83 @@ function setupStickerDrag(root){
     let drag = null;
     s.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); s.setPointerCapture(e.pointerId); const r = s.parentElement.getBoundingClientRect(); drag = { ox: e.clientX - r.left - parseFloat(s.style.left), oy: e.clientY - r.top - parseFloat(s.style.top), r, moved:false }; });
     s.addEventListener('pointermove', e => { if (!drag) return; drag.moved = true; s.style.left = (e.clientX - drag.r.left - drag.ox) + 'px'; s.style.top = (e.clientY - drag.r.top - drag.oy) + 'px'; });
+    s.addEventListener('click', e => e.stopPropagation());
     s.addEventListener('pointerup', async e => { if (!drag) return; const [mid, idx, i] = s.dataset.stk.split(','); const m = Store.get('moments', mid); const st = m.photos[+idx].stickers[+i]; if (drag.moved) { st.x = Math.round(parseFloat(s.style.left)); st.y = Math.round(parseFloat(s.style.top)); await Store.put('moments', m); } else if (await ask('Remove sticker?', { ok: 'Remove' })) { m.photos[+idx].stickers.splice(+i, 1); await Store.put('moments', m); render(); } drag = null; });
   });
 }
 
 // ---------- new / edit moment ----------
-ACT.newMoment = (arg) => { const [tripId, date] = (arg||'').split(','); momentSheet({ tripId: tripId || (D.tripForDate(date||today())||{}).id || '', date: date || today() }); };
-ACT.editMoment = id => momentSheet(JSON.parse(JSON.stringify(Store.get('moments', id))), true);
+ACT.newMoment = (arg) => { const [tripId, date] = (arg||'').split(','); momentSheet({ tripId: tripId || '', date: date || today() }); };
+ACT.editMoment = id => { const m = Store.get('moments', id); if (m && m.flight) return ACT.editFlight(id); momentSheet(JSON.parse(JSON.stringify(m)), true); };
 let rec = null, voiceSaving = null, recDone = null;
-function momentSheet(m, editing){
-  const me = D.me(); m.authorId = m.authorId || me.id; m.photos = m.photos || []; m.cost = m.cost || null; let showCost = !!(m.cost && (m.cost.amount || m.cost.tag)); let pendingPhotos = []; let ddOpen = false; let noTrip = editing ? !m.tripId : false;
-  const draw = () => { const t = noTrip ? null : (m.tripId ? D.trip(m.tripId) : D.tripForDate(m.date)); if (t && !m.tripId) m.tripId = t.id; const cats = D.cats(t); const tag = m.cost && m.cost.tag || 'food'; return `<div class="bar"><button data-act="closeSheet">Close</button><span>${palOf(me.id)} ${esc(me.name)}</span></div><h2 class="hd md" style="margin:0">${editing ? 'Edit memory' : 'New memory'}</h2>
-    <input class="in big" id="m-text" placeholder="Say it how you'd say it to them" value="${esc(m.text||'')}">
-    <div class="row" style="position:relative"><div class="seg" style="width:130px"><button class="${!noTrip?'on':''}" data-act="mTripMode|trip">Trip</button><button class="${noTrip?'on':''}" data-act="mTripMode|none">No trip</button></div>${!noTrip ? `<span style="position:relative"><button class="chip on" data-act="mDD">${t ? esc(t.city) + ' · ' + fmtD(t.start) : 'Pick a trip'} ${ddOpen?'▴':'▾'}</button>${ddOpen ? `<div class="dd">${D.trips().slice().reverse().map(x => `<button data-act="mPickTrip|${x.id}"><span style="${x.id===(t&&t.id)?'font-weight:500':''}">${esc(x.city)} · ${fmtD(x.start)} – ${fmtD(x.end)}</span>${x.id===(t&&t.id)?'<i class="heart" style="width:10px;height:10px"></i>':''}</button>`).join('')}<button data-act="mNewTrip"><span class="muted">+ New trip</span></button></div>` : ''}</span>` : ''}</div>
-    <div class="attach"><button data-act="mPhoto|photo"><b>◫</b>Photo${pendingPhotos.filter(p=>!p.polaroid).length ? ' ' + pendingPhotos.filter(p=>!p.polaroid).length : ''}</button><button data-act="mPhoto|polaroid"><b>▣</b>Polaroid${pendingPhotos.filter(p=>p.polaroid).length ? ' ' + pendingPhotos.filter(p=>p.polaroid).length : ''}</button><button class="${m.voice||rec?'sel':''}" data-act="mVoice"><b>●</b>${rec ? 'Stop' : voiceSaving ? 'Saving…' : m.voice ? 'Voice ✓' : 'Voice'}</button><button class="${m.song?'sel':''}" data-act="mSong"><b>♫</b>Song</button><button class="${showCost?'sel':''}" data-act="mCost"><b>$</b>Cost</button></div>
-    ${showCost ? `<div class="glass deep"><div class="row"><span style="display:flex;align-items:center"><span class="num" style="font-size:34px">$</span><input class="in money" id="m-amt" type="number" inputmode="decimal" placeholder="0" value="${m.cost&&m.cost.amount||''}"></span><div class="seg who" style="width:190px">${D.users2().map(u => `<button class="${(m.cost&&m.cost.paidBy||me.id)===u.id?'on':''}" data-act="mPaid|${u.id}"><i class="pal ${u.pal}"></i></button>`).join('')}<button class="${(m.cost&&m.cost.paidBy)==='both'?'on':''}" data-act="mPaid|both"><span class="pair">${D.users2().map(u => `<i class="pal ${u.pal}"></i>`).join('')}</span></button></div></div>${(m.cost&&m.cost.paidBy)==='both' ? (() => { const sp = m.cost.split || { mode:'pct' }; const [a, b] = D.users2(); const pct = sp.mode !== 'amt'; const va = sp[a.id] != null ? sp[a.id] : (pct ? 50 : ''), vb = sp[b.id] != null ? sp[b.id] : (pct ? 50 : ''); return `<div class="row" style="margin-top:8px"><div class="seg" style="width:90px"><button class="${pct?'on':''}" data-act="mSplitMode|pct">%</button><button class="${pct?'':'on'}" data-act="mSplitMode|amt">$</button></div><span style="display:flex;gap:6px;align-items:center"><i class="pal ${a.pal}"></i><input class="in" type="number" inputmode="decimal" id="sp-a" data-act="mSplitEdit|${a.id}" data-on="change" value="${va}" style="width:64px;padding:6px 8px;font-size:13px;text-align:right"><i class="pal ${b.pal}" style="margin-left:4px"></i><input class="in" type="number" inputmode="decimal" id="sp-b" data-act="mSplitEdit|${b.id}" data-on="change" value="${vb}" style="width:64px;padding:6px 8px;font-size:13px;text-align:right"></span></div>`; })() : ''}<div class="l" style="margin-top:6px">Paid by ${esc(D.payerText(m) || me.name)}${t ? ` · counts toward ${esc(t.city)}'s ${esc(D.catLabel(t, tag))}` : ' · no trip, not in a budget'}</div><div class="chips" style="margin-top:8px">${cats.map(c => `<button class="chip ${tag===c.key?'on':''}" data-act="mTag|${c.key}">${esc(c.label)}</button>`).join('')}${t ? `<button class="chip dash" data-act="mOther">+ Other</button>` : ''}</div></div>` : ''}
-    <div class="row" style="margin-top:auto"><span style="display:flex;gap:8px;align-items:center"><input class="in" type="date" id="m-date" value="${m.date}" style="padding:8px 10px;font-size:12px;width:auto"></span><span style="display:flex;gap:6px">${editing ? `<button class="btn sm lite" data-act="mDelete">Delete</button>` : ''}<button class="btn sm" data-act="mSave">Save</button></span></div>
+const uidShort = () => Math.random().toString(36).slice(2, 9);
+// Old memories kept one voice / song / cost in fixed fields; move them into the items list when edited.
+function normalizeItems(m, keepCost){
+  m.items = (m.items || []).map(x => Object.assign({ id: uidShort() }, x));
+  if (m.song) { m.items.unshift({ id: uidShort(), type:'song', url: m.song, title: m.songTitle || '', artist: m.songBy || '' }); delete m.song; delete m.songTitle; delete m.songBy; }
+  if (m.voice) { m.items.unshift({ id: uidShort(), type:'voice', asset: m.voice, dur: m.voiceDur || 0, by: m.authorId }); delete m.voice; delete m.voiceDur; }
+  if (!keepCost && m.cost && (+m.cost.amount || m.cost.label)) { m.items.push(Object.assign({ id: uidShort(), type:'cost', label: '' }, m.cost)); m.cost = null; }
+  return m;
+}
+function momentSheet(m, editing, opts){
+  opts = opts || {}; const present = opts.present; const me = D.me();
+  m.authorId = m.authorId || me.id; m.photos = m.photos || []; normalizeItems(m, !!present);
+  let pendingPhotos = [], removedAssets = [], ddOpen = false, costEdit = null;
+  let mode = m.tripId ? (D.trip(m.tripId) && D.trip(m.tripId).occasion ? 'occ' : 'trip') : 'none';
+  if (!editing && !m.tripId && !present) { const t = D.tripForDate(m.date), o = D.occasionForDate(m.date); if (t) { mode = 'trip'; m.tripId = t.id; } else if (o) { mode = 'occ'; m.tripId = o.id; } }
+  const costs = () => m.items.filter(x => x.type === 'cost');
+  const theTrip = () => mode === 'none' ? null : (m.tripId ? D.trip(m.tripId) : null);
+  const x = (act) => `<button class="x" data-act="${act}" aria-label="Remove">✕</button>`;
+  const who = present ? D.user(present.forUser) : null;
+  const drawMain = () => { const t = theTrip(); const list = mode === 'occ' ? D.occasions() : D.trips();
+    const thumbs = m.photos.map((p, i) => `<div class="th ${p.polaroid ? 'pol' : ''}"><img data-asset="${p.asset}" alt="">${x('mRmPhoto|e,' + i)}</div>`).join('') + pendingPhotos.map((p, i) => `<div class="th ${p.polaroid ? 'pol' : ''}"><img src="${p.url}" alt="">${x('mRmPhoto|p,' + i)}</div>`).join('');
+    const voices = m.items.filter(it => it.type === 'voice').map(v => `<div class="it"><button class="play" data-act="play|${v.asset}"></button>${palOf(v.by || m.authorId)}<span class="bars">${BARS}</span><span class="l">${fmtDur(v.dur)}</span>${x('mRmItem|' + v.id)}</div>`).join('');
+    const songs = m.items.filter(it => it.type === 'song').map(sg => `<div class="it"><button class="songbtn" data-act="mEditSong|${sg.id}"><b>${esc(sg.title || 'A song')}</b><div class="l">${esc(sg.artist || (sg.url||'').replace(/^https?:\/\//,'').slice(0,34))}</div></button>${x('mRmItem|' + sg.id)}</div>`).join('');
+    const cs = costs(); const tot = cs.reduce((s, c) => s + (+c.amount||0), 0);
+    const costRows = cs.length ? `<div class="costs">${cs.map(c => `<button class="cr" data-act="mCostEdit|${c.id}">${c.label ? `<b>${esc(c.label)}</b>` : ''}<span class="tag">${esc(D.catLabel(t, c.tag || 'food'))}</span>${payerPals(c)}<span class="amt">${money2(c.amount)}</span></button>`).join('')}${cs.length > 1 ? `<div class="cr"><span class="l">Total</span><span class="amt">${money2(tot)}</span></div>` : ''}</div>` : '';
+    const seg = present ? '' : `<div class="row" style="position:relative"><div class="seg" style="width:210px"><button class="${mode==='trip'?'on':''}" data-act="mMode|trip">Trip</button><button class="${mode==='occ'?'on':''}" data-act="mMode|occ">Occasion</button><button class="${mode==='none'?'on':''}" data-act="mMode|none">None</button></div>${mode !== 'none' ? `<span style="position:relative"><button class="chip on" data-act="mDD">${t ? esc(t.city) + ' · ' + fmtD(t.start) : mode === 'occ' ? 'Pick one' : 'Pick a trip'} ${ddOpen?'▴':'▾'}</button>${ddOpen ? `<div class="dd">${list.slice().reverse().map(o => `<button data-act="mPickTrip|${o.id}"><span style="${o.id===(t&&t.id)?'font-weight:500':''}">${esc(o.city)} · ${fmtD(o.start)}${o.end !== o.start ? ' – ' + fmtD(o.end) : ''}</span>${o.id===(t&&t.id)?'<i class="heart" style="width:10px;height:10px"></i>':''}</button>`).join('')}<button data-act="${mode === 'occ' ? 'mNewOcc' : 'mNewTrip'}"><span class="muted">+ New ${mode === 'occ' ? 'occasion' : 'trip'}</span></button></div>` : ''}</span>` : ''}</div>`;
+    return `<div class="bar"><button data-act="closeSheet">Close</button><span>${present ? esc(who.name) + '\'s birthday · ' + fmtD(m.date) : palOf(me.id) + ' ' + esc(me.name)}</span></div><h2 class="hd md" style="margin:0">${present ? (editing ? 'Your present' : 'Wrap a present') : editing ? 'Edit memory' : 'New memory'}</h2>
+    ${present ? `<div class="row" style="justify-content:center;padding:6px 0 2px"><div class="gift"></div></div><textarea class="in" id="m-text" style="min-height:120px;font-size:15px" placeholder="Write them something">${esc(m.text||'')}</textarea>` : `<input class="in big" id="m-text" placeholder="Say it how you'd say it to them" value="${esc(m.text||'')}">`}
+    ${seg}
+    <div class="attach"><button data-act="mPhoto|photo"><b>◫</b>Photo</button><button data-act="mPhoto|polaroid"><b>▣</b>Polaroid</button><button class="${rec?'sel':''}" data-act="mVoice"><b>●</b>${rec ? 'Stop' : voiceSaving ? 'Saving…' : 'Voice'}</button><button data-act="mSong"><b>♫</b>Song</button>${present ? '' : `<button data-act="mCost"><b>$</b>Cost</button>`}</div>
+    <div class="items">${thumbs ? `<div class="thumbs">${thumbs}</div>` : ''}${voices}${songs}${costRows}</div>
+    ${present ? `<div class="list" style="font-size:13.5px"><div class="row"><span>Opens</span><span class="l">${fmtD(m.date)} · 12:00am ${esc(who.name)}'s time</span></div><div class="row"><span>Hidden from ${esc(who.name)}</span><span class="l">until then</span></div></div>` : ''}
+    <div class="row" style="margin-top:auto">${present ? `<span class="l">Only you can see this</span>` : `<span style="display:flex;gap:8px;align-items:center"><input class="in" type="date" id="m-date" value="${m.date}" style="padding:8px 10px;font-size:12px;width:auto"></span>`}<span style="display:flex;gap:6px">${editing ? `<button class="btn sm lite" data-act="mDelete">Delete</button>` : ''}<button class="btn sm" data-act="mSave">${present ? (editing ? 'Save' : 'Wrap it') : 'Save'}</button></span></div>
     <input type="file" id="m-file" accept="image/*" multiple hidden data-act="mFiles" data-on="change">`; };
-  const keep = () => { const tx = $('#m-text'), dt = $('#m-date'), amt = $('#m-amt'); if (tx) m.text = tx.value; if (dt) m.date = dt.value; if (showCost) { m.cost = Object.assign({ paidBy: me.id, tag:'food' }, m.cost||{}, amt ? { amount: +amt.value || 0 } : {}); const sa = $('#sp-a'), sb = $('#sp-b'); if (sa && sb && m.cost.paidBy === 'both') { const [a, b] = D.users2(); m.cost.split = Object.assign({ mode:'pct' }, m.cost.split||{}, { [a.id]: sa.value === '' ? null : +sa.value, [b.id]: sb.value === '' ? null : +sb.value }); } } };
+  const drawCost = () => { const c = costEdit; const t = theTrip(); const cats = D.cats(t); const tag = c.tag || 'food';
+    return `<div class="bar"><button data-act="cBack">Back</button><span>Cost</span></div>
+    <input class="in big" id="c-label" placeholder="What was it?" value="${esc(c.label||'')}">
+    <div class="row"><span style="display:flex;align-items:center"><span class="num" style="font-size:34px">$</span><input class="in money" id="c-amt" type="number" inputmode="decimal" placeholder="0" value="${c.amount||''}" style="width:170px"></span></div>
+    <div class="chips">${cats.map(k => `<button class="chip ${tag===k.key?'on':''}" data-act="cTag|${k.key}">${esc(k.label)}</button>`).join('')}${t ? `<button class="chip dash" data-act="cOther">+ Other</button>` : ''}</div>
+    ${paidByHTML(c, 'c')}
+    <div class="l">${esc(D.payerTextC(Object.assign({}, c, { amount: +c.amount || 0 })) || me.name)}${t ? ` · counts toward ${esc(t.city)}'s ${esc(D.catLabel(t, tag))}` : ' · no trip, not in a budget'}</div>
+    <div class="row" style="margin-top:auto"><button class="btn sm lite" data-act="cRemove">Remove</button><button class="btn sm" data-act="cDone">Done</button></div>`; };
+  const draw = () => costEdit ? drawCost() : drawMain();
+  const keepCost = () => { if (!costEdit) return; const l = $('#c-label'), a = $('#c-amt'); if (l) costEdit.label = l.value.trim(); if (a) costEdit.amount = a.value === '' ? '' : +a.value; readSplit(costEdit, 'c'); };
+  const keep = () => { if (costEdit) return keepCost(); const tx = $('#m-text'), dt = $('#m-date'); if (tx) m.text = tx.value; if (dt) m.date = dt.value; };
   const redraw = () => { keep(); openSheet(draw(), null, 'tall'); };
-  ACT.mTripMode = k => { keep(); noTrip = k === 'none'; if (noTrip) m.tripId = ''; else { const t = D.tripForDate(m.date); m.tripId = t ? t.id : (D.trips().slice(-1)[0]||{}).id || ''; } ddOpen = false; redraw(); };
+  const confirmRm = async what => editing ? await ask('Remove this ' + what + '?', { ok: 'Remove' }) : true;
+  ACT.mMode = k => { keep(); mode = k; ddOpen = false; if (k === 'none') m.tripId = ''; else { const cur = m.tripId && D.trip(m.tripId); if (!cur || !!cur.occasion !== (k === 'occ')) { const f = k === 'occ' ? D.occasionForDate(m.date) : D.tripForDate(m.date); m.tripId = f ? f.id : ''; } } redraw(); };
   ACT.mDD = () => { keep(); ddOpen = !ddOpen; redraw(); };
   ACT.mPickTrip = id => { keep(); m.tripId = id; ddOpen = false; redraw(); };
-  ACT.mNewTrip = async () => { const city = await ask('Which city?', { input: '', ok: 'Add trip' }); if (!city) return; const start = m.date; Store.put('trips', { id: Store.uid(), city, start, end: addDays(start, 4), flyer: '', createdAt: Date.now() }).then(t => { m.tripId = t.id; ddOpen = false; redraw(); }); };
-  ACT.mOther = async () => { keep(); const t = D.trip(m.tripId); if (!t) return; const name = await ask('Name the category', { input: '', ok: 'Add' }); if (!name) return; const key = 'c_' + name.toLowerCase().replace(/[^a-z0-9]+/g,'_'); t.cats = (t.cats||[]).filter(c => c.key !== key).concat([{ key, label: name }]); await Store.put('trips', t); m.cost = Object.assign({ paidBy: me.id }, m.cost||{}, { tag: key }); redraw(); };
+  ACT.mNewTrip = async () => { keep(); const city = await ask('Which city?', { input: '', ok: 'Add trip' }); if (!city) return; const t = await Store.put('trips', { id: Store.uid(), city, start: m.date, end: addDays(m.date, 4), flyer: '', createdAt: Date.now() }); m.tripId = t.id; ddOpen = false; redraw(); };
+  ACT.mNewOcc = async () => { keep(); const name = await ask('Name the occasion', { input: '', placeholder: 'One year, Christmas…', ok: 'Add' }); if (!name) return; const o = await Store.put('trips', { id: Store.uid(), occasion: true, kind: 'custom', city: name, start: m.date, end: m.date, authorId: me.id, secret: false, createdAt: Date.now() }); m.tripId = o.id; ddOpen = false; redraw(); };
   let photoKind = 'photo';
   ACT.mPhoto = kind => { keep(); photoKind = kind; $('#m-file').click(); };
-  ACT.mFiles = (a, f) => { Array.from(f.files).forEach(file => pendingPhotos.push({ file, polaroid: photoKind === 'polaroid' })); redraw(); };
-  ACT.mCost = () => { keep(); showCost = !showCost; if (showCost && !m.cost) m.cost = { paidBy: me.id, tag: m.flight ? 'flight' : 'food', amount:'' }; redraw(); };
-  ACT.mPaid = id => { keep(); m.cost.paidBy = id; if (id === 'both' && !m.cost.split) { const [a, b] = D.users2(); m.cost.split = { mode:'pct', [a.id]: 50, [b.id]: 50 }; } redraw(); };
-  ACT.mSplitMode = mode => { keep(); const [a, b] = D.users2(); const amt = +m.cost.amount || 0; const sp = m.cost.split || {}; if (mode === 'amt' && sp.mode !== 'amt') { const pa = sp[a.id] != null ? sp[a.id] : 50; m.cost.split = { mode:'amt', [a.id]: Math.round(amt * pa) / 100, [b.id]: Math.round(amt * (100 - pa)) / 100 }; } else if (mode === 'pct' && sp.mode === 'pct') {} else if (mode === 'pct') { const va = sp[a.id] != null ? sp[a.id] : amt / 2; const pa = amt ? Math.round(va / amt * 100) : 50; m.cost.split = { mode:'pct', [a.id]: pa, [b.id]: 100 - pa }; } openSheet(draw(), null, 'tall'); };
-  ACT.mSplitEdit = (uid, el) => { keep(); const [a, b] = D.users2(); const sp = m.cost.split; const other = uid === a.id ? b.id : a.id; const v = +el.value || 0; if (sp.mode === 'amt') sp[other] = Math.max(0, Math.round(((+m.cost.amount || 0) - v) * 100) / 100); else sp[other] = Math.max(0, Math.min(100, 100 - v)); sp[uid] = v; openSheet(draw(), null, 'tall'); };
-  ACT.mTag = k => { keep(); m.cost.tag = k; redraw(); };
-  ACT.mSong = async () => { keep(); const url = await ask('Paste a Spotify link', { input: m.song || '', placeholder: 'https://open.spotify.com/track/…', ok: 'Next' }); if (url == null) return; m.song = url; if (m.song) { m.songTitle = (await ask('Song title', { sub: 'optional', input: m.songTitle || '', ok: 'Next' })) || ''; m.songBy = (await ask('Artist', { sub: 'optional', input: m.songBy || '', ok: 'Done' })) || ''; } redraw(); };
+  ACT.mFiles = (a, f) => { Array.from(f.files).forEach(file => pendingPhotos.push({ file, polaroid: photoKind === 'polaroid', url: URL.createObjectURL(file) })); redraw(); };
+  ACT.mRmPhoto = async arg => { keep(); const [k, i] = arg.split(','); if (k === 'p') { pendingPhotos.splice(+i, 1); return redraw(); } if (!await confirmRm('photo')) return; const [p] = m.photos.splice(+i, 1); if (p) removedAssets.push(p.asset); redraw(); };
+  ACT.mRmItem = async id => { keep(); const it = m.items.find(x => x.id === id); if (!it) return; if (!await confirmRm(it.type === 'voice' ? 'voice note' : it.type)) return; m.items = m.items.filter(x => x.id !== id); if (it.type === 'voice' && it.asset) removedAssets.push(it.asset); redraw(); };
+  const songAsk = async sg => { const url = await ask('Paste a Spotify link', { input: sg.url || '', placeholder: 'https://open.spotify.com/track/…', ok: 'Next' }); if (url == null || !url) return null; sg.url = url; sg.title = (await ask('Song title', { sub: 'optional', input: sg.title || '', ok: 'Next' })) || ''; sg.artist = (await ask('Artist', { sub: 'optional', input: sg.artist || '', ok: 'Done' })) || ''; return sg; };
+  ACT.mSong = async () => { keep(); const sg = await songAsk({ id: uidShort(), type: 'song' }); if (sg) m.items.push(sg); redraw(); };
+  ACT.mEditSong = async id => { keep(); const sg = m.items.find(x => x.id === id); if (sg) await songAsk(sg); redraw(); };
+  ACT.mCost = () => { keep(); const t = theTrip(); costEdit = { id: uidShort(), type: 'cost', label: '', amount: '', tag: t && t.occasion ? 'gift' : 'food', paidBy: me.id, _new: true }; openSheet(draw(), () => { const l = $('#c-label'); if (l) l.focus(); }, 'tall'); };
+  ACT.mCostEdit = id => { keep(); const c = m.items.find(x => x.id === id); if (!c) return; costEdit = JSON.parse(JSON.stringify(c)); openSheet(draw(), null, 'tall'); };
+  ACT.cBack = () => { costEdit = null; openSheet(draw(), null, 'tall'); };
+  ACT.cDone = () => { keepCost(); const c = costEdit; delete c._new; costEdit = null; if (+c.amount || c.label) { const i = m.items.findIndex(x => x.id === c.id); if (i >= 0) m.items[i] = c; else m.items.push(c); } openSheet(draw(), null, 'tall'); };
+  ACT.cRemove = () => { const id = costEdit.id; costEdit = null; m.items = m.items.filter(x => x.id !== id); openSheet(draw(), null, 'tall'); };
+  ACT.cTag = k => { keepCost(); costEdit.tag = k; openSheet(draw(), null, 'tall'); };
+  ACT.cOther = async () => { keepCost(); const t = theTrip(); if (!t) return; const name = await ask('Name the category', { input: '', ok: 'Add' }); if (!name) return; const key = 'c_' + name.toLowerCase().replace(/[^a-z0-9]+/g,'_'); t.cats = (t.cats||[]).filter(c => c.key !== key).concat([{ key, label: name }]); await Store.put('trips', t); costEdit.tag = key; openSheet(draw(), null, 'tall'); };
+  bindPaidBy('c', () => costEdit, () => { keepCost(); }, () => openSheet(draw(), null, 'tall'));
   // Voice: pick a format the phone can actually record (iPhone = mp4), collect data every second,
   // and keep a promise so Save waits for the recording to finish instead of saving without it.
   ACT.mVoice = async () => { keep();
@@ -468,7 +595,7 @@ function momentSheet(m, editing){
     if (!window.MediaRecorder || !navigator.mediaDevices) return toast('This phone can\'t record here');
     let stream; try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { return toast(e && e.name === 'NotAllowedError' ? 'Microphone is off for this app — allow it in Settings' : 'Microphone not available'); }
     const type = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'].find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t));
-    const chunks = []; const started = Date.now(); let done;
+    const chunks = []; const started = Date.now();
     try { rec = type ? new MediaRecorder(stream, { mimeType: type }) : new MediaRecorder(stream); } catch (e) { stream.getTracks().forEach(t => t.stop()); return toast('Recorder: ' + e.message); }
     rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
     voiceSaving = null; let finish; recDone = new Promise(r => finish = r);
@@ -476,18 +603,166 @@ function momentSheet(m, editing){
       voiceSaving = (async () => {
         if (!chunks.length) { toast('Nothing was recorded — check the microphone'); return; }
         const blob = new Blob(chunks, { type: mt.split(';')[0] });
-        try { m.voice = await Store.putBlob(blob, mt.includes('mp4') ? 'm4a' : 'webm'); m.voiceDur = (Date.now() - started) / 1000; toast('Voice note ready'); }
+        try { const asset = await Store.putBlob(blob, mt.includes('mp4') ? 'm4a' : 'webm'); m.items.push({ id: uidShort(), type: 'voice', asset, dur: (Date.now() - started) / 1000, by: me.id }); toast('Voice note added'); }
         catch (e) { toast('Could not keep the voice note: ' + e.message); }
-      })().finally(() => { voiceSaving = null; if (sheet) redraw(); });
-      finish(voiceSaving); if (sheet) redraw();
+      })().finally(() => { voiceSaving = null; if (sheet && !costEdit) redraw(); });
+      finish(voiceSaving); if (sheet && !costEdit) redraw();
     };
     rec.start(1000); redraw(); toast('Recording… tap Stop when done');
   };
-  ACT.mDelete = async () => { if (!await ask('Delete this moment?', { ok: 'Delete' })) return; await Store.remove(m.id); closeSheet(); toast('Deleted'); render(); };
-  ACT.mSave = async () => { if (rec) { const p = recDone; rec.stop(); await p; } if (voiceSaving) await voiceSaving; keep(); if (!m.text && !pendingPhotos.length && !m.photos.length && !m.voice && !m.song && !(m.cost && m.cost.amount)) return toast('Add something first'); for (const p of pendingPhotos) { const blob = await shrink(p.file); const asset = await Store.putBlob(blob, 'jpg'); m.photos.push({ asset, polaroid: p.polaroid, stickers: [] }); } if (!showCost) m.cost = null; m.id = m.id || Store.uid(); m.kind = m.kind || 'moment'; m.createdAt = m.createdAt || Date.now(); if (noTrip) m.tripId = ''; else if (!m.tripId) { const t = D.tripForDate(m.date); m.tripId = t ? t.id : ''; } await Store.put('moments', m); closeSheet(); toast('Saved'); if (route.name === 'home' || route.name === 'trip' || route.name === 'day') render(); };
-  openSheet(draw(), () => { if (!editing) $('#m-text').focus(); }, 'tall');
+  ACT.mDelete = async () => { if (!await ask(present ? 'Delete this present?' : 'Delete this memory?', { ok: 'Delete' })) return; await Store.remove(m.id); closeSheet(); toast('Deleted'); render(); };
+  ACT.mSave = async () => {
+    if (costEdit) ACT.cDone();
+    if (rec) { const p = recDone; rec.stop(); await p; } if (voiceSaving) await voiceSaving; keep();
+    m.items = m.items.filter(it => it.type !== 'cost' || +it.amount || it.label);
+    if (!m.text && !pendingPhotos.length && !m.photos.length && !m.items.length) return toast('Add something first');
+    for (const p of pendingPhotos) { const blob = await shrink(p.file); const asset = await Store.putBlob(blob, 'jpg'); m.photos.push({ asset, polaroid: p.polaroid, stickers: [] }); }
+    m.id = m.id || Store.uid(); m.createdAt = m.createdAt || Date.now();
+    if (present) { Object.assign(m, { forUser: present.forUser, fromUser: me.id, authorId: me.id }); await Store.put('presents', m); }
+    else { m.kind = m.kind || 'moment'; if (mode === 'none') m.tripId = ''; else if (!m.tripId) { const f = mode === 'occ' ? D.occasionForDate(m.date) : D.tripForDate(m.date); m.tripId = f ? f.id : ''; } await Store.put('moments', m); }
+    for (const a of removedAssets) { Store.removeBlob(a); await Store.removeMany(Store.all('comments').filter(c => c.asset === a).map(c => c.id)); }
+    closeSheet(); toast(present ? 'Wrapped' : 'Saved'); render();
+  };
+  openSheet(draw(), sh => { if (opts.openCost) { const c = costs()[costs().length-1]; if (c) ACT.mCostEdit(c.id); else ACT.mCost(); } else if (!editing && !present) { const t = $('#m-text'); if (t) t.focus(); } }, 'tall');
+}
+// "Paid by" control shared by memory costs and flights: you / them / both, and a % or $ split for both
+function paidByHTML(c, p){ const [a, b] = D.users2(); const me = D.me(); const pb = c.paidBy || me.id;
+  const split = pb === 'both' ? (() => { const sp = c.split || { mode:'pct' }; const pct = sp.mode !== 'amt'; const va = sp[a.id] != null ? sp[a.id] : (pct ? 50 : ''), vb = sp[b.id] != null ? sp[b.id] : (pct ? 50 : ''); return `<div class="row" style="margin-top:8px"><div class="seg" style="width:90px"><button class="${pct?'on':''}" data-act="${p}SplitMode|pct">%</button><button class="${pct?'':'on'}" data-act="${p}SplitMode|amt">$</button></div><span style="display:flex;gap:6px;align-items:center"><i class="pal ${a.pal}"></i><input class="in" type="number" inputmode="decimal" id="${p}-sp-a" data-act="${p}SplitEdit|${a.id}" data-on="change" value="${va}" style="width:64px;padding:6px 8px;font-size:13px;text-align:right"><i class="pal ${b.pal}" style="margin-left:4px"></i><input class="in" type="number" inputmode="decimal" id="${p}-sp-b" data-act="${p}SplitEdit|${b.id}" data-on="change" value="${vb}" style="width:64px;padding:6px 8px;font-size:13px;text-align:right"></span></div>`; })() : '';
+  return `<div class="row"><span>Paid by</span><div class="seg who" style="width:190px">${D.users2().map(u => `<button class="${pb===u.id?'on':''}" data-act="${p}Paid|${u.id}"><i class="pal ${u.pal}"></i></button>`).join('')}<button class="${pb==='both'?'on':''}" data-act="${p}Paid|both"><span class="pair">${D.users2().map(u => `<i class="pal ${u.pal}"></i>`).join('')}</span></button></div></div>${split}`; }
+function readSplit(c, p){ const sa = $('#' + p + '-sp-a'), sb = $('#' + p + '-sp-b'); if (sa && sb && c.paidBy === 'both') { const [a, b] = D.users2(); c.split = Object.assign({ mode:'pct' }, c.split||{}, { [a.id]: sa.value === '' ? null : +sa.value, [b.id]: sb.value === '' ? null : +sb.value }); } }
+function bindPaidBy(p, get, keep, redraw){
+  ACT[p + 'Paid'] = id => { keep(); const c = get(); c.paidBy = id; if (id === 'both' && !c.split) { const [a, b] = D.users2(); c.split = { mode:'pct', [a.id]: 50, [b.id]: 50 }; } redraw(); };
+  ACT[p + 'SplitMode'] = mode => { keep(); const c = get(); const [a, b] = D.users2(); const amt = +c.amount || 0; const sp = c.split || {}; if (mode === 'amt' && sp.mode !== 'amt') { const pa = sp[a.id] != null ? sp[a.id] : 50; c.split = { mode:'amt', [a.id]: Math.round(amt * pa) / 100, [b.id]: Math.round(amt * (100 - pa)) / 100 }; } else if (mode === 'pct' && sp.mode !== 'pct') { const va = sp[a.id] != null ? sp[a.id] : amt / 2; const pa = amt ? Math.round(va / amt * 100) : 50; c.split = { mode:'pct', [a.id]: pa, [b.id]: 100 - pa }; } redraw(); };
+  ACT[p + 'SplitEdit'] = (uid, el) => { keep(); const c = get(); const [a, b] = D.users2(); const sp = c.split || (c.split = { mode:'pct' }); const other = uid === a.id ? b.id : a.id; const v = +el.value || 0; if (sp.mode === 'amt') sp[other] = Math.max(0, Math.round(((+c.amount || 0) - v) * 100) / 100); else sp[other] = Math.max(0, Math.min(100, 100 - v)); sp[uid] = v; redraw(); };
 }
 async function shrink(file){ try { const img = await createImageBitmap(file); const max = 1600, s = Math.min(1, max / Math.max(img.width, img.height)); const c = document.createElement('canvas'); c.width = Math.round(img.width * s); c.height = Math.round(img.height * s); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); return await new Promise(r => c.toBlob(r, 'image/jpeg', .86)); } catch (e) { return file; } }
+
+// ---------- flight sheet ----------
+ACT.editFlight = id => { const src = Store.get('moments', id); if (!src) return; const m = JSON.parse(JSON.stringify(src)); const me = D.me(); m.flight = m.flight || {}; let ddOpen = false;
+  const draw = () => { const f = m.flight; const t = m.tripId ? D.trip(m.tripId) : null; const info = flightInfo(Object.assign({}, m, { flight: Object.assign({}, f, { title: '' }) }));
+    const sibs = t ? D.tripMoments(t.id).filter(x => x.flight && x.id !== m.id && (!f.code || x.flight.code === f.code)) : [];
+    const c = m.cost || {}; const att = m.attachment;
+    return `<div class="bar"><button data-act="closeSheet">Close</button><span>Flight · ${fmtDow(m.date)} ${MON[parseDate(m.date).getMonth()]}</span></div>
+    <div class="l" style="margin-bottom:-6px">Shows as</div>
+    <input class="in big" id="f-title" value="${esc(f.title||'')}" placeholder="${esc(info.text)}">
+    <div class="glass deep"><div class="row"><input class="in" id="f-route" value="${esc((f.from||'') + ' → ' + (f.to||''))}" style="background:transparent;border:0;padding:0;font-size:22px;font-weight:500;letter-spacing:-.02em;width:60%"><input class="in chip" id="f-no" value="${esc(f.no||'')}" placeholder="AC 112" style="width:92px;text-align:center;font-size:12px;padding:5px 8px"></div>
+      <div class="row" style="margin-top:8px"><input class="in" type="date" id="f-date" value="${m.date}" style="padding:6px 10px;font-size:13px;width:auto"><span style="display:flex;gap:4px;align-items:center"><input class="in" id="f-dep" value="${esc(f.dep||'')}" placeholder="dep" style="width:70px;padding:6px 8px;font-size:13px;text-align:center"> – <input class="in" id="f-arr" value="${esc(f.arr||'')}" placeholder="arr" style="width:70px;padding:6px 8px;font-size:13px;text-align:center"></span></div>
+      <div class="l" style="margin-top:8px">${esc(AIRPORTS[f.from] || f.from || '')} → ${esc(AIRPORTS[f.to] || f.to || '')}${f.code ? ' · Booking ' + esc(f.code) : ''}</div></div>
+    <div class="list" style="font-size:13.5px">
+      <div class="row"><span>Who flies</span><div class="seg" style="width:130px">${D.users2().map(u => `<button class="${(f.who || (t && t.flyer) || me.id)===u.id?'on':''}" data-act="fWho|${u.id}"><i class="pal ${u.pal}"></i></button>`).join('')}</div></div>
+      <div class="row"><span>Cost</span><span style="display:flex;align-items:center;font-weight:500">$<input class="in" id="f-amt" type="number" inputmode="decimal" value="${c.amount||''}" placeholder="0" style="width:100px;padding:6px 8px;font-size:13px"></span></div>
+      ${paidByHTML(Object.assign({ paidBy: me.id }, c), 'f')}
+      <div class="row" style="position:relative"><span>Trip</span><span style="position:relative"><button class="chip on" data-act="fDD">${t ? esc(t.city) + ' · ' + fmtD(t.start) : 'No trip'} ${ddOpen?'▴':'▾'}</button>${ddOpen ? `<div class="dd">${D.trips().slice().reverse().map(x => `<button data-act="fPick|${x.id}"><span style="${x.id===(t&&t.id)?'font-weight:500':''}">${esc(x.city)} · ${fmtD(x.start)} – ${fmtD(x.end)}</span></button>`).join('')}<button data-act="fPick|"><span class="muted">No trip</span></button></div>` : ''}</span></div>
+      ${att ? `<button class="row" data-act="openAtt|${att.asset}"><span style="display:flex;gap:10px;align-items:center"><span class="filebadge">${esc(((att.name||'').split('.').pop()||'file').toUpperCase().slice(0,4))}</span><span style="text-align:left"><div style="font-weight:500">${esc(att.name || 'Confirmation')}</div><div class="l">Added from email</div></span></span><span class="l">Open ›</span></button>` : ''}
+      ${sibs.map(x => `<button class="row" data-act="fGoto|${x.id}"><span>${x.date < m.date ? 'Outbound flight' : 'Return flight'}</span><span class="l">${fmtD(x.date)} · ${esc(x.flight.no||'')} ›</span></button>`).join('')}
+    </div>
+    <div class="row" style="margin-top:auto"><button class="btn sm lite" data-act="fDelete">Delete flight</button><button class="btn sm" data-act="fSave">Save</button></div>`; };
+  const keep = () => { const g = id => $('#' + id); if (!g('f-title')) return; const f = m.flight; f.title = g('f-title').value.trim(); const [a, b] = g('f-route').value.split(/→|->|-/).map(x => (x||'').trim().toUpperCase()); f.from = a || f.from; f.to = b || f.to; f.no = g('f-no').value.trim(); m.date = g('f-date').value || m.date; f.dep = g('f-dep').value.trim(); f.arr = g('f-arr').value.trim(); const amt = g('f-amt').value; if (amt === '' || !+amt) { if (m.cost) m.cost.amount = 0; } else { m.cost = Object.assign({ paidBy: me.id, tag: 'flight' }, m.cost || {}, { amount: +amt }); } if (m.cost) readSplit(m.cost, 'f'); m.text = 'Flight ' + (f.from||'') + ' → ' + (f.to||''); };
+  const redraw = () => { keep(); openSheet(draw(), null, 'tall'); };
+  ACT.fWho = id => { keep(); m.flight.who = id; redraw(); };
+  ACT.fDD = () => { keep(); ddOpen = !ddOpen; redraw(); };
+  ACT.fPick = id => { keep(); m.tripId = id || ''; ddOpen = false; redraw(); };
+  ACT.fGoto = async id => { keep(); await Store.put('moments', m); ACT.editFlight(id); };
+  bindPaidBy('f', () => (m.cost = m.cost || { amount: 0, paidBy: me.id, tag: 'flight' }), keep, () => openSheet(draw(), null, 'tall'));
+  ACT.fSave = async () => { keep(); if (m.cost && !+m.cost.amount) m.cost = null; await Store.put('moments', m); closeSheet(); toast('Saved'); render(); };
+  ACT.fDelete = async () => { if (!await ask('Delete this flight?', { ok: 'Delete' })) return; await Store.remove(m.id); closeSheet(); toast('Deleted'); render(); };
+  openSheet(draw(), null, 'tall');
+};
+ACT.openAtt = async id => { const b = await Store.blob(id); if (!b) return toast('File not on this phone yet'); const u = URL.createObjectURL(b); const w = window.open(u, '_blank'); if (!w) download(b, id); };
+
+// ---------- notifications ----------
+// Each phone subscribes once; the server (supabase/functions/notify) sends to the other person's phones.
+const pushState = { on: false, checked: false, reason: '' };
+const NOTIFY = [['say','Say & think','when {o} says or thinks something'],['memories','New memories','one per memory'],['comments','Comments','on your photos'],['plans','New plans','when {o} adds a plan']];
+const REMIND = [['trips','Trips','a week before and the day before'],['flights','Flights','an hour before landing, and when they land'],['birthdays','Birthdays','a week before and on the day'],['anni','The 23rd','the morning of each month']];
+async function checkPush(){ pushState.checked = true; pushState.on = false;
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) { pushState.reason = 'home'; return; }
+  if (!CFG.PUSH_PUBLIC_KEY || Store.mode !== 'supabase') { pushState.reason = 'setup'; return; }
+  if (Notification.permission === 'denied') { pushState.reason = 'denied'; return; }
+  try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); pushState.on = !!sub && Notification.permission === 'granted'; pushState.reason = ''; } catch (e) { pushState.reason = 'error'; } }
+const b64 = s => { const p = '='.repeat((4 - s.length % 4) % 4); const raw = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from([...raw].map(c => c.charCodeAt(0))); };
+const subId = sub => 'push_' + Array.from(sub.endpoint).reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7).toString(36);
+function renderNotify(app){ const me = D.me(), o = D.other() || { name: 'them' }; const pref = me.notify || {};
+  if (!pushState.checked) checkPush().then(() => route.name === 'notify' && render());
+  const row = ([k, t, sub]) => `<div class="row"><span style="text-align:left"><div style="font-size:13.5px">${t}</div><div class="l">${esc(sub.replace('{o}', o.name))}</div></span><button class="tog ${pref[k] === false ? 'off' : ''}" data-act="notifyPref|${k}"></button></div>`;
+  const status = pushState.on ? `<div class="row"><span style="font-size:13.5px">On this phone</span><span class="l">allowed ✓</span></div><div class="row" style="margin-top:6px"><button class="l" data-act="pushTest">Send me a test</button><button class="l" data-act="pushOff">Turn off on this phone</button></div>`
+    : pushState.reason === 'home' ? `<div style="font-size:13.5px;font-weight:500">Add the app to your Home Screen first</div><div class="sub" style="margin-top:4px">iPhone only allows notifications for apps opened from the Home Screen. Safari → Share → Add to Home Screen, then open it from there.</div>`
+    : pushState.reason === 'setup' ? `<div style="font-size:13.5px;font-weight:500">Almost there</div><div class="sub" style="margin-top:4px">${Store.mode !== 'supabase' ? 'Notifications need sync (Supabase) turned on first.' : 'The notification key isn\'t in config.js yet — see supabase/PUSH-SETUP.md.'}</div>`
+    : pushState.reason === 'denied' ? `<div style="font-size:13.5px;font-weight:500">Notifications are blocked</div><div class="sub" style="margin-top:4px">iPhone Settings → Notifications → Des &amp; Jett → Allow Notifications.</div>`
+    : `<div class="row"><span style="font-size:13.5px">On this phone</span><button class="btn sm" data-act="pushOn">Turn on</button></div>`;
+  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="profile">‹ Profile</button><span>Notifications</span></div><h1 class="hd">Notifications</h1>
+    <div class="glass">${status}</div>
+    <div class="l">From ${esc(o.name)}</div><div class="list" style="margin-top:-8px">${NOTIFY.map(row).join('')}</div>
+    <div class="l">Reminders</div><div class="list" style="margin-top:-8px">${REMIND.map(row).join('')}</div>
+  </div>${nav('')}`;
+}
+ACT.notifyPref = async (k, el) => { const me = D.me(); me.notify = Object.assign({}, me.notify, { [k]: (me.notify || {})[k] === false }); el.classList.toggle('off', me.notify[k] === false); await Store.put('users', me); };
+ACT.pushOn = async () => {
+  try {
+    const perm = await Notification.requestPermission(); if (perm !== 'granted') { pushState.reason = perm === 'denied' ? 'denied' : ''; return render(); }
+    const reg = await navigator.serviceWorker.ready; let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(CFG.PUSH_PUBLIC_KEY) });
+    await Store.put('push', { id: subId(sub), userId: D.me().id, sub: sub.toJSON(), at: Date.now(), device: navigator.userAgent.slice(0, 80) });
+    pushState.on = true; toast('Notifications on'); render();
+  } catch (e) { toast('Could not turn on: ' + e.message); }
+};
+ACT.pushOff = async () => { try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); if (sub) { await Store.remove(subId(sub)); await sub.unsubscribe(); } } catch (e) {} pushState.on = false; toast('Off on this phone'); render(); };
+ACT.pushTest = async () => { await Store.put('pushtest', { id: Store.uid(), userId: D.me().id, at: Date.now() }); toast('Sent — it should arrive in a few seconds'); };
+if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.go) { location.hash = e.data.go; } });
+
+// ---------- birthdays ----------
+ACT.birthdaySheet = arg => { const [uid, iso] = arg.split(','); const u = D.user(uid); const me = D.me(); if (!u) return; const mine = uid === me.id; const date = iso || D.nextBirthday(u);
+  const present = Store.all('presents').find(p => p.fromUser === me.id && p.forUser === uid && p.date === date);
+  const occ = D.occasions().find(o => o.kind === 'birthday' && o.forUser === uid && o.bday === date && o.authorId === me.id);
+  const sealed = D.wishes().find(w => w.opens > today()); const wl = D.wishlist(uid);
+  openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>${fmtDow(date)} ${MON[parseDate(date).getMonth()]}</span></div>
+    <h2 class="hd md" style="margin:0">${mine ? 'Your birthday' : esc(u.name) + '\'s birthday'}</h2>
+    <div class="list" style="font-size:13.5px">
+    ${mine ? `<button class="row" data-act="wishSheet"><span>Make a wish</span><span class="l">${sealed ? 'sealed until ' + fmtD(sealed.opens) : ''} ›</span></button>
+      <button class="row" data-act="wishlistSheet|${uid}"><span>My wishlist</span><span class="l">${wl.length || ''} ›</span></button>`
+    : `<button class="row" data-act="presentFor|${uid},${date}"><span>${present ? 'Your present' : 'Wrap a present'}</span><span class="l">${present ? (present.openedAt ? 'opened ♡' : 'wrapped · opens ' + fmtD(date)) : ''} ›</span></button>
+      <button class="row" data-act="bdayBudget|${uid},${date}"><span>Birthday budget</span><span class="l">${occ ? money(D.tripCost(occ).total) + ' of ' + money(D.planTotal(occ)) : 'hidden from ' + esc(u.name)} ›</span></button>
+      <button class="row" data-act="wishlistSheet|${uid}"><span>${esc(u.name)}'s wishlist</span><span class="l">${wl.length || ''} ›</span></button>
+      <button class="row" data-act="bdayReminder|${uid}"><span>Add a reminder to my calendar</span><span class="l">a week before ›</span></button>`}
+    </div>`);
+};
+ACT.presentFor = arg => { const [uid, date] = arg.split(','); const me = D.me(); const p = Store.all('presents').find(x => x.fromUser === me.id && x.forUser === uid && x.date === date); momentSheet(p ? JSON.parse(JSON.stringify(p)) : { date, text: '' }, !!p, { present: { forUser: uid } }); };
+ACT.bdayBudget = async arg => { const [uid, date] = arg.split(','); const u = D.user(uid); const me = D.me(); let o = D.occasions().find(x => x.kind === 'birthday' && x.forUser === uid && x.bday === date && x.authorId === me.id);
+  if (!o) o = await Store.put('trips', { id: Store.uid(), occasion: true, kind: 'birthday', forUser: uid, bday: date, city: u.name + '\'s birthday', start: addDays(date, -14), end: date, secret: true, authorId: me.id, createdAt: Date.now() });
+  closeSheet(); go('budget', { id: o.id }); };
+ACT.bdayReminder = uid => { const u = D.user(uid); if (!u || !u.birthday) return; const d = D.nextBirthday(u).replace(/-/g, ''); const nx = D.nextBirthday(u, addDays(D.nextBirthday(u), 1)).replace(/-/g, '');
+  const ics = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Des & Jett//EN','BEGIN:VEVENT','UID:bday-' + u.id + '@desjett','DTSTAMP:' + new Date().toISOString().replace(/[-:]/g,'').slice(0,15) + 'Z','DTSTART;VALUE=DATE:' + d,'DTEND;VALUE=DATE:' + addDays(D.nextBirthday(u), 1).replace(/-/g,''),'RRULE:FREQ=YEARLY','SUMMARY:' + u.name + '\'s birthday','BEGIN:VALARM','ACTION:DISPLAY','DESCRIPTION:' + u.name + '\'s birthday is in a week','TRIGGER:-P7D','END:VALARM','BEGIN:VALARM','ACTION:DISPLAY','DESCRIPTION:' + u.name + '\'s birthday is today','TRIGGER:PT9H','END:VALARM','END:VEVENT','END:VCALENDAR'].join('\r\n');
+  const blob = new Blob([ics], { type: 'text/calendar' }); const f = new File([blob], u.name + '-birthday.ics', { type: 'text/calendar' });
+  if (navigator.canShare && navigator.canShare({ files: [f] })) { navigator.share({ files: [f] }).catch(() => {}); return; }
+  const w = window.open('data:text/calendar;charset=utf-8,' + encodeURIComponent(ics), '_blank'); if (!w) download(blob, f.name); };
+// the wish capsule: sealed until your next birthday, even from you
+ACT.wishSheet = () => { const me = D.me(); const ws = D.wishes(); const t = today();
+  const opened = ws.filter(w => w.opens <= t).sort((a,b) => b.opens.localeCompare(a.opens))[0]; const sealed = ws.find(w => w.opens > t);
+  const next = D.nextBirthday(me, addDays(t, 1)) || addDays(t, 365);
+  openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Birthday wish</span></div>
+    ${opened ? `<h2 class="hd md" style="margin:0">${opened.opens >= addDays(t, -40) ? 'Last year you wished…' : 'You once wished…'}</h2><div class="letter" style="font-size:16px">${esc(opened.text)}<div class="from">${palOf(me.id)} ${esc(me.name)} · ${fmtD(isoDate(new Date(opened.at)))}, ${new Date(opened.at).getFullYear()}</div></div>` : `<h2 class="hd md" style="margin:0">Make a wish</h2>`}
+    <div class="l" style="margin-top:6px">${opened ? 'This year\'s wish' : ''}</div>
+    <div class="envlp"><div class="seal">♡</div></div>
+    ${sealed ? `<div class="row"><span class="l">Sealed · opens ${fmtD(sealed.opens)}, ${sealed.opens.slice(0,4)}</span><span></span></div>` : `<textarea class="in" id="w-text" placeholder="Make a wish. It stays sealed until your next birthday." style="min-height:80px;font-size:15px"></textarea><div class="row" style="margin-top:auto"><span class="l">Opens ${fmtD(next)}, ${next.slice(0,4)}</span><button class="btn sm" data-act="wishSeal|${next}">Seal it</button></div>`}`, null, 'tall'); };
+ACT.wishSeal = async opens => { const text = ($('#w-text')||{}).value; if (!text || !text.trim()) return toast('Write a wish first'); await Store.put('wishes', { id: Store.uid(), userId: D.me().id, text: text.trim(), at: Date.now(), opens }); toast('Sealed'); ACT.wishSheet(); };
+// wishlists: yours to keep, theirs to peek at — "I got this" is only visible to the one buying
+ACT.wishlistSheet = uid => { const u = D.user(uid); const me = D.me(); const mine = uid === me.id; const items = D.wishlist(uid);
+  openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>${mine ? 'My wishlist' : esc(u.name) + '\'s wishlist'}</span></div>
+    <h2 class="hd md" style="margin:0">${mine ? 'Things I\'d love' : esc(u.name) + ' would love'}</h2>
+    <div class="list" style="font-size:13.5px">${items.map(w => `<div class="row"><span style="text-align:left">${w.url ? `<a href="${esc(w.url)}" target="_blank" rel="noopener" style="font-weight:500">${esc(w.title)}</a>` : `<span style="font-weight:500">${esc(w.title)}</span>`}${!mine && w.gotBy ? `<div class="l">${w.gotBy === me.id ? 'you got this' : 'taken'}</div>` : ''}</span>${mine ? `<button class="l" data-act="wlDel|${w.id}">✕</button>` : `<button class="chip ${w.gotBy === me.id ? 'on' : ''}" style="font-size:11px" data-act="wlGot|${w.id}">${w.gotBy === me.id ? 'Got it ✓' : 'I got this'}</button>`}</div>`).join('') || `<div class="empty" style="text-align:left">${mine ? 'Nothing yet.' : 'Nothing yet — maybe drop a hint.'}</div>`}</div>
+    ${mine ? `<div class="row" style="margin-top:auto"><span></span><button class="btn sm" data-act="wlAdd">+ Add</button></div>` : ''}`, null, 'tall'); };
+ACT.wlAdd = async () => { const title = await ask('What is it?', { input: '', ok: 'Next' }); if (!title) return; const url = await ask('Link', { sub: 'optional', input: '', placeholder: 'https://…', ok: 'Add' }); await Store.put('wishlist', { id: Store.uid(), userId: D.me().id, title, url: url || '', at: Date.now() }); ACT.wishlistSheet(D.me().id); };
+ACT.wlDel = async id => { await Store.remove(id); ACT.wishlistSheet(D.me().id); };
+ACT.wlGot = async id => { const w = Store.get('wishlist', id); const me = D.me(); w.gotBy = w.gotBy === me.id ? '' : me.id; await Store.put('wishlist', w); ACT.wishlistSheet(w.userId); };
+// opening a present on your birthday: it becomes a memory from them
+ACT.openPresent = async id => { const p = Store.get('presents', id); if (!p) return; const from = D.user(p.fromUser) || {};
+  if (!p.openedAt) { p.openedAt = Date.now(); await Store.put('presents', p); if (!Store.all('moments').some(m => m.fromPresent === p.id)) await Store.put('moments', { id: Store.uid(), fromPresent: p.id, kind: 'moment', date: p.date, tripId: (D.tripForDate(p.date)||{}).id || '', authorId: p.fromUser, text: p.text || '', photos: JSON.parse(JSON.stringify(p.photos || [])), items: JSON.parse(JSON.stringify(p.items || [])), createdAt: Date.now() }); }
+  openSheet(`<div class="bar"><span>From ${esc(from.name||'')}</span><span>${fmtD(p.date)}</span></div>
+    ${p.text ? `<div class="letter">${esc(p.text).replace(/\n/g, '<br>')}<div class="from">${palOf(from.id)} ${esc(from.name||'')}</div></div>` : ''}
+    ${(p.items||[]).filter(i => i.type === 'voice').map(v => voiceCard(Object.assign({ by: from.id }, v))).join('')}
+    ${(p.items||[]).filter(i => i.type === 'song').map(sg => songCard(sg, from.id)).join('')}
+    ${(p.photos||[]).map(ph => `<div class="gphoto"><img data-asset="${ph.asset}" alt=""></div>`).join('')}
+    <div class="row" style="margin-top:auto"><span class="l">Saved to Memories</span><button class="btn sm" data-act="closeSheet">Close</button></div>`, null, 'tall'); };
 
 // ---------- plans ----------
 ACT.addPlan = arg => { const [date, tripId] = arg.split(','); planSheet({ date, tripId: tripId || (D.tripForDate(date)||{}).id || '' }); };
@@ -508,7 +783,7 @@ function renderCalendar(app){
   const flights = D.moments().filter(m => m.flight); const plans = D.moments().filter(m => m.kind === 'plan'), evs = D.events().filter(e => e.ownerId === me.id || (!e.hidden && (D.user(e.ownerId)||{}).showEvents !== false));
   let cells = '<div class="h">S</div><div class="h">M</div><div class="h">T</div><div class="h">W</div><div class="h">T</div><div class="h">F</div><div class="h">S</div>';
   for (let i = 0; i < start; i++) cells += '<div></div>';
-  for (let d = 1; d <= n; d++) { const iso = `${calMonth.y}-${String(calMonth.m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`; const t = D.tripForDate(iso); const ours = plans.some(p => p.date === iso) || flights.some(f => f.date === iso); const ev = !calOurs && evs.some(e => e.date === iso); const an = D.isMonthiversary(iso); cells += `<button class="${t ? 'trip' + (iso===t.start?' s':'') + (iso===t.end?' e':'') : ''} ${ours?'ours':''} ${ev && !an?'ev':''} ${an?'anni':''} ${iso===today()?'today':''}" data-act="calSel|${iso}"><span>${d}</span></button>`; }
+  for (let d = 1; d <= n; d++) { const iso = `${calMonth.y}-${String(calMonth.m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`; const t = D.tripForDate(iso); const ours = plans.some(p => p.date === iso) || flights.some(f => f.date === iso); const ev = !calOurs && evs.some(e => e.date === iso); const an = D.isMonthiversary(iso); const bd = D.birthdaysOn(iso).length; cells += `<button class="${bd ? 'bd ' : ''}${t ? 'trip' + (iso===t.start?' s':'') + (iso===t.end?' e':'') : ''} ${ours?'ours':''} ${ev && !an?'ev':''} ${an?'anni':''} ${iso===today()?'today':''}" data-act="calSel|${iso}"><span>${d}</span></button>`; }
   const monthFirst = `${calMonth.y}-${String(calMonth.m+1).padStart(2,'0')}-01`, monthLast = `${calMonth.y}-${String(calMonth.m+1).padStart(2,'0')}-${String(n).padStart(2,'0')}`;
   const inMonth = d => d >= monthFirst && d <= monthLast;
   // one agenda for the whole month, grouped by day; the selected day is always there, highlighted
@@ -517,12 +792,15 @@ function renderCalendar(app){
   const days = new Set([calSel].filter(onward));
   plans.forEach(p => onward(p.date) && days.add(p.date)); flights.forEach(f => onward(f.date) && days.add(f.date)); if (!calOurs) evs.forEach(e => onward(e.date) && days.add(e.date));
   { const lastDate = [...days, ...D.trips().map(t => t.end)].sort().slice(-1)[0] || monthLast; const cur = new Date(calMonth.y, calMonth.m, 1); const endM = new Date(Math.max(new Date(lastDate).getTime(), new Date(calMonth.y, calMonth.m + 2, 0).getTime())); while (cur <= endM) { const iso = isoDate(new Date(cur.getFullYear(), cur.getMonth(), (D.anniversary() ? +D.anniversary().slice(8) : 1), 12)); if (D.isMonthiversary(iso) && onward(iso)) days.add(iso); cur.setMonth(cur.getMonth() + 1); } }
-  const firstFlight = flights.map(x => x.date).sort()[0];
+  D.users().forEach(u => { if (!u.birthday) return; for (let y = calMonth.y; y <= calMonth.y + 2; y++) { const iso = D.bdayIn(u, y); if (onward(iso)) days.add(iso); } });
+  const occs = D.occasions().filter(o => o.kind !== 'birthday'); occs.forEach(o => { if (onward(o.start)) days.add(o.start); });
   let lastYm = `${calMonth.y}-${String(calMonth.m+1).padStart(2,'0')}`;
   const groups = [...days].sort().map(d => { const t = D.tripForDate(d); const sel = d === calSel; const ym = d.slice(0,7); const divider = ym !== lastYm ? `<div class="mdiv">${MONTHS[+ym.slice(5,7)-1]}${ym.slice(0,4) !== String(calMonth.y) ? ' ' + ym.slice(0,4) : ''}</div>` : ''; lastYm = ym;
     const rows = [];
+    D.birthdaysOn(d).forEach(u => rows.push(`<button class="ev" data-act="birthdaySheet|${u.id},${d}"><span class="t">All day</span>${palOf(u.id)}<span style="font-weight:500">${u.id === me.id ? 'Your birthday' : esc(u.name) + '\'s birthday'}</span></button>`));
+    occs.filter(o => o.start === d).forEach(o => rows.push(`<button class="ev" data-go="budget/${o.id}"><span class="t">${o.end !== o.start ? 'til ' + fmtD(o.end) : 'All day'}</span><span class="pair">${D.users2().map(u => `<i class="pal ${u.pal}"></i>`).join('')}</span><span style="font-weight:500">${esc(o.city)}</span>${o.secret ? '<span class="r">hidden</span>' : '<span class="r">occasion</span>'}</button>`));
     if (D.isMonthiversary(d)) rows.push(`<button class="ev" data-go="day/${t ? t.id : 'none'}_${d}"><span class="t">All day</span><span class="pair">${D.users().map(u => `<i class="pal ${u.pal}"></i>`).join('')}</span><span style="font-weight:500">${D.monthsSince(d)} Month${D.monthsSince(d)===1?'':'s'}</span><i class="heart r"></i></button>`);
-    flights.filter(f => f.date === d).forEach(f => rows.push(`<button class="ev" data-go="day/${f.tripId || 'none'}_${f.date}"><span class="t">${esc(flightInfo(f).time || 'Flight')}</span>${palOf(f.flight.who || f.authorId)}<span style="font-weight:500">${esc(flightInfo(f).text)}</span><span class="r">${esc(f.flight.no||'')}</span></button>`));
+    flights.filter(f => f.date === d).forEach(f => rows.push(`<button class="ev" data-act="editFlight|${f.id}"><span class="t">${esc(flightInfo(f).time || 'Flight')}</span>${palOf(f.flight.who || f.authorId)}<span style="font-weight:500">${esc(flightInfo(f).text)}</span><span class="r">${esc(f.flight.no||'')}</span></button>`));
     plans.filter(p => p.date === d).forEach(p => rows.push(`<button class="ev" data-go="day/${p.tripId || 'none'}_${p.date}"><span class="t">${esc(p.time||'All day')}</span>${p.who && p.who !== 'both' ? palOf(p.who) : `<span class="pair">${D.users2().map(u => `<i class="pal ${u.pal}"></i>`).join('')}</span>`}<span style="font-weight:500">${esc(p.title)}</span>${p.hidden ? '<span class="r">hidden</span>' : ''}</button>`));
     if (!calOurs) evs.filter(e => e.date === d).sort((a,b) => (a.time||'').localeCompare(b.time||'')).forEach(e => rows.push(`<button class="ev ${e.hidden?'hid':''}" data-act="evSheet|${e.id}"><span class="t">${esc(e.time||'All day')}</span>${palOf(e.ownerId)}<span>${esc(e.title)}</span>${e.hidden ? '<span class="r">hidden</span>' : ''}</button>`));
     return divider + `<div class="agroup ${sel?'sel':''}" id="${sel?'ag-sel':''}"><div class="ahead"><span>${fmtDow(d)}${t ? ' · ' + esc(t.city) : ''}</span>${sel ? `<button class="l" data-act="addPlan|${d}${t?','+t.id:''}">+ Plan</button>` : ''}</div><div class="list">${rows.join('') || '<div class="empty" style="padding:6px 0;text-align:left">Nothing yet.</div>'}</div></div>`; });
@@ -581,7 +859,7 @@ function renderProfile(app){
     <div class="glass"><div class="row"><span style="font-size:13.5px">Photos</span><div class="seg" style="width:150px"><button class="${s.photoStyle==='polaroid'?'on':''}" data-act="photoStyle|polaroid">Polaroid</button><button class="${s.photoStyle==='clean'?'on':''}" data-act="photoStyle|clean">Clean</button></div></div></div>
     <div class="glass"><div class="row"><span style="font-size:13.5px">Sky</span><div class="seg" style="width:200px"><button class="${(s.sky||'auto')==='auto'?'on':''}" data-act="sky|auto">Follow</button><button class="${s.sky==='light'?'on':''}" data-act="sky|light">Light</button><button class="${s.sky==='dark'?'on':''}" data-act="sky|dark">Dark</button></div></div></div>
     <div class="glass"><div class="row"><span style="font-size:13.5px">Where I am</span><select class="in" style="width:auto;padding:6px 10px;font-size:12px" data-act="myCity" data-on="change">${Object.keys(CITIES).map(c => `<option ${me.city===c?'selected':''}>${c}</option>`).join('')}</select></div></div>
-    <div class="list" style="font-size:13.5px"><div class="row"><span>Together since</span><input class="in" type="date" value="${esc(s.anniversary||'')}" data-act="anniEdit" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div><button class="row" data-go="gcal"><span>Google Calendar</span><span class="l">${(me.icsUrls||[]).length ? 'live · ' + me.icsUrls.length : 'connect'} ›</span></button><button class="row" data-go="emails"><span>Trip emails</span><span class="l">›</span></button><button class="row" data-go="chat"><span>Chat</span><span class="l">${D.bubbles().length} ›</span></button><button class="row" data-act="howto"><span>How it works</span><span class="l">›</span></button><button class="row" data-act="exportAll"><span>Export everything</span><span class="l">backup ›</span></button><button class="row" data-act="importAll"><span>Restore a backup</span><span class="l">›</span></button>
+    <div class="list" style="font-size:13.5px"><div class="row"><span>Together since</span><input class="in" type="date" value="${esc(s.anniversary||'')}" data-act="anniEdit" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div><div class="row"><span>My birthday</span><input class="in" type="date" value="${esc(me.birthday||'')}" data-act="bdayEdit|${me.id}" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div>${D.other() ? `<div class="row"><span>${esc(D.other().name)}'s birthday</span><input class="in" type="date" value="${esc(D.other().birthday||'')}" data-act="bdayEdit|${D.other().id}" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div>` : ''}<button class="row" data-go="gcal"><span>Google Calendar</span><span class="l">${(me.icsUrls||[]).length ? 'live · ' + me.icsUrls.length : 'connect'} ›</span></button><button class="row" data-go="emails"><span>Trip emails</span><span class="l">›</span></button><button class="row" data-go="notify"><span>Notifications</span><span class="l">${pushState.on ? 'on' : 'off'} ›</span></button><button class="row" data-go="chat"><span>Chat</span><span class="l">${D.bubbles().length} ›</span></button><button class="row" data-act="howto"><span>How it works</span><span class="l">›</span></button><button class="row" data-act="exportAll"><span>Export everything</span><span class="l">backup ›</span></button><button class="row" data-act="importAll"><span>Restore a backup</span><span class="l">›</span></button>
     ${Store.mode === 'supabase' ? `<button class="row" data-act="${Store.user?'signout':'signinSheet'}"><span>${Store.user ? 'Signed in · ' + esc(Store.user.email) : 'Sign in to sync'}</span><span class="l">›</span></button>` : `<div class="row"><span>Sync</span><span class="l">local only · add Supabase keys</span></div>`}
     <button class="row" data-act="switchUser"><span>Switch person</span><span class="l">›</span></button><button class="row" data-act="resetAll"><span class="muted">Start over</span><span class="l">›</span></button></div>
   </div>${nav('')}`;
@@ -591,6 +869,7 @@ ACT.myName = async (a, el) => { const me = D.me(); me.name = el.value.trim() || 
 ACT.myPal = async p => { const me = D.me(), o = D.other(); me.pal = p; await Store.put('users', me); if (o) { o.pal = p === 'bunny' ? 'puppy' : 'bunny'; await Store.put('users', o); } render(); };
 ACT.myCity = async (a, el) => { const me = D.me(); Object.assign(me, { city: el.value }, CITIES[el.value]); await Store.put('users', me); render(); };
 ACT.tint = t => D.saveSettings({ tint: t }).then(render);
+ACT.bdayEdit = async (uid, el) => { const u = D.user(uid); u.birthday = el.value; await Store.put('users', u); };
 ACT.anniEdit = (a, el) => D.saveSettings({ anniversary: el.value }).then(render);
 ACT.photoStyle = p => D.saveSettings({ photoStyle: p }).then(render);
 ACT.sky = p => D.saveSettings({ sky: p }).then(render);
@@ -600,11 +879,24 @@ ACT.signout = async () => { await Store.signOut(); render(); };
 ACT.signinSheet = () => openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Sync</span></div><input class="in" id="email" placeholder="email"><button class="btn block" data-act="signin">Send magic link</button>`);
 ACT.exportAll = () => download(new Blob([Store.exportJSON()], { type:'application/json' }), 'des-jett-backup.json');
 ACT.importAll = () => { const f = document.createElement('input'); f.type = 'file'; f.accept = '.json'; f.onchange = async () => { await Store.importJSON(await f.files[0].text()); toast('Restored'); render(); }; f.click(); };
+function occSheet(o, editing){ const other = D.other() || { name: 'them' };
+  openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>${editing ? 'Edit occasion' : 'New occasion'}</span></div>
+    <input class="in big" id="o-name" placeholder="One year, Christmas…" value="${esc(o.city||'')}">
+    <div class="row"><div class="field" style="flex:1"><label>From</label><input class="in" type="date" id="o-start" value="${o.start}"></div><div class="field" style="flex:1"><label>To</label><input class="in" type="date" id="o-end" value="${o.end}"></div></div>
+    <div class="row"><span style="font-size:13.5px">Hide from ${esc(other.name)}</span><button class="tog ${o.secret?'':'off'}" id="o-hide" data-act="togToggle"></button></div>
+    <div class="row" style="margin-top:auto">${editing ? `<button class="btn sm lite" data-act="occDelete|${o.id}">Delete</button>` : '<span></span>'}<button class="btn sm" data-act="occSave">Save</button></div>`, sh => { if (!editing) $('#o-name').focus(); });
+  ACT.occSave = async () => { const name = $('#o-name').value.trim(), start = $('#o-start').value, end = $('#o-end').value || start; if (!name || !start) return toast('A name and a date, please'); Object.assign(o, { city: name, start, end: end < start ? start : end, secret: !$('#o-hide').classList.contains('off'), occasion: true, kind: o.kind || 'custom', authorId: o.authorId || D.me().id, createdAt: o.createdAt || Date.now() }); o.id = o.id || Store.uid(); await Store.put('trips', o); closeSheet(); go('budget', { id: o.id }); };
+}
+ACT.occNew = () => occSheet({ start: today(), end: today(), secret: false });
+ACT.occEdit = id => occSheet(JSON.parse(JSON.stringify(D.trip(id))), true);
+ACT.occDelete = async id => { if (!await ask('Delete this occasion?', { sub: 'Its costs stay as memories, without the budget.', ok: 'Delete' })) return; const ms = D.tripMoments(id).map(m => Object.assign(m, { tripId: '' })); await Store.putMany('moments', ms); await Store.remove(id); closeSheet(); go('between'); };
 function renderBetween(app){
   const s = D.settings(), g = s.tripGuess;
   app.innerHTML = `<div class="screen"><div class="bar"><button data-go="profile">‹ Profile</button><span>Between visits</span></div><h1 class="hd">Between visits</h1>
     <div class="glass env">${s.envelopes.map((e,i) => `<div class="row"><input class="in" style="background:transparent;border:0;padding:0;width:45%" value="${esc(e.name)}" data-act="bName|${i}" data-on="change"><span style="display:flex;align-items:center;gap:6px">$<input class="in money" style="font-size:22px;width:70px" type="number" value="${e.amount}" data-act="bAmt|${i}" data-on="change"><button class="chip ${e.per==='each'?'on':''}" data-act="bPer|${i}">${e.per==='each'?'each':'shared'}</button><button class="l" data-act="bDel|${i}">×</button></span></div>`).join('')}<div class="row" style="color:var(--mu)"><button data-act="bAdd">Add</button><span>+</span></div></div>
     <div class="row" style="padding:0 4px"><span class="l">Per month</span><span class="num" style="font-size:22px">${money(D.envelopeMonthly())}</span></div><div class="hr"></div>
+    <div class="row"><span class="l">Occasions</span><button class="l" data-act="occNew">+ Occasion</button></div>
+    <div class="list" style="margin-top:-8px">${D.occasions().filter(o => o.end >= addDays(today(), -60)).map(o => { const c = D.tripCost(o); return `<button class="row" data-go="budget/${o.id}"><div style="text-align:left"><div style="font-weight:500">${esc(o.city)}</div><div class="l">${fmtD(o.start)}${o.end !== o.start ? ' – ' + fmtD(o.end) : ''}${o.secret ? ' · hidden from ' + esc((D.other()||{}).name||'them') : ''}</div></div><span class="l">${money(c.total)} of ${money(D.planTotal(o))}</span></button>`; }).join('') || '<div class="empty" style="text-align:left;padding:6px 0">Birthdays, anniversaries, holidays — a budget for one date.</div>'}</div><div class="hr"></div>
     <div class="l">A typical trip</div><div class="glass env" style="margin-top:-6px">${[['flight','Flight'],['night','Stay, per night'],['day','A day together']].map(([k,l]) => `<div class="row"><span>${l}</span><span>$<input class="in money" style="font-size:22px;width:80px" type="number" value="${g[k]}" data-act="gEdit|${k}" data-on="change"></span></div>`).join('')}<div class="row" style="font-weight:500"><span>5 days</span><span>~${money(g.flight + g.night*4 + g.day*5)}</span></div></div>
   </div>${nav('')}`;
 }
@@ -723,9 +1015,11 @@ function renderMemories(app){
   const trips = D.trips().filter(t => t.start <= last && t.end >= first);
   const ms = D.moments().filter(m => m.date >= first && m.date <= last && m.kind !== 'booking' && m.kind !== 'plan');
   const daysTogether = trips.reduce((s,t) => { const a = t.start > first ? t.start : first, b = (t.end < last ? t.end : last); const cap = cur ? today() : b; return s + Math.max(0, daysBetween(a, b < cap ? b : cap) + 1) * (a <= cap ? 1 : 0); }, 0);
-  const meals = D.moments().filter(m => m.date >= first && m.date <= last && m.cost && m.cost.tag === 'food');
-  const tripsCost = D.moments().filter(m => m.date >= first && m.date <= last && m.cost && m.cost.amount && m.tripId).reduce((s,m) => s + +m.cost.amount, 0);
-  const env = future ? 0 : D.envelopeMonthly(); const total = tripsCost + env;
+  const meals = D.moments().filter(m => m.date >= first && m.date <= last && D.costLines(m).some(c => c.tag === 'food'));
+  const inMonth = D.moments().filter(m => m.date >= first && m.date <= last && m.tripId);
+  const tripsCost = inMonth.filter(m => !(D.trip(m.tripId)||{}).occasion).reduce((s,m) => s + D.costTotal(m), 0);
+  const occCost = inMonth.filter(m => (D.trip(m.tripId)||{}).occasion).reduce((s,m) => s + D.costTotal(m), 0);
+  const env = future ? 0 : D.envelopeMonthly(); const total = tripsCost + occCost + env;
   const months = D.anniversary() ? D.monthsSince(first) : null; const anniDay = D.anniversary() ? ym + '-' + D.anniversary().slice(8) : '';
   const anniMoments = anniDay ? ms.filter(m => m.date === anniDay) : [];
   const upcoming = D.trips().filter(t => t.start >= (cur ? today() : first) && t.start <= last);
@@ -739,8 +1033,9 @@ function renderMemories(app){
     <div class="stats"><div><b>${dash(trips.length)}</b><span class="l">trip${trips.length===1?'':'s'}</span></div><div><b>${dash(daysTogether)}</b><span class="l">days</span></div><div><b>${dash(meals.length)}</b><span class="l">meals</span></div><div><b>${dash(ms.length)}</b><span class="l">moments</span></div></div>
     ${trips.filter(t => t.start <= today()).length ? `<div class="covers">${trips.filter(t => t.start <= today()).slice(0,3).map(cover).join('')}</div>` : ''}
     ${future || (cur && upcoming.length) ? upcoming.map(t => `<button class="glass tap" data-go="trip/${t.id}"><div class="row"><span class="l">Coming up</span><span class="l">${fmtD(t.start)} – ${fmtD(t.end)}</span></div><div class="row" style="margin-top:8px"><span style="font-size:20px;font-weight:500;letter-spacing:-.02em">${esc(t.city)}</span><span class="sub">${daysBetween(today(), t.start)} days</span></div></button>`).join('') : ''}
-    ${!future ? `<div class="glass"><div class="row"><span class="l">Together in ${MONTHS[memMonth.m]}</span><span class="l">${daysTogether ? '~' + money(total/daysTogether) + ' / day' : tripsCost ? '' : 'envelopes only'}</span></div><div class="num" style="margin-top:8px">${money(total)}</div>${tripsCost ? `<div class="l" style="margin-top:4px">Trips ${money(tripsCost)} · envelopes ${money(env)}</div>` : ''}</div>` : ''}
+    ${!future ? `<div class="glass"><div class="row"><span class="l">Together in ${MONTHS[memMonth.m]}</span><span class="l">${daysTogether ? '~' + money(total/daysTogether) + ' / day' : tripsCost ? '' : 'envelopes only'}</span></div><div class="num" style="margin-top:8px">${money(total)}</div>${tripsCost || occCost ? `<div class="l" style="margin-top:4px">${[tripsCost ? 'Trips ' + money(tripsCost) : '', occCost ? 'occasions ' + money(occCost) : '', 'envelopes ' + money(env)].filter(Boolean).join(' · ')}</div>` : ''}</div>` : ''}
     ${anniDay && (future || anniDay >= today() || plans.length) ? `<div class="list" style="font-size:13.5px">${anniDay >= today() ? `<button class="row" data-go="day/${(D.tripForDate(anniDay)||{}).id||'none'}_${anniDay}"><span>${fmtD(anniDay)}</span><span class="l">${D.monthsSince(anniDay)} months <i class="heart"></i></span></button>` : ''}${plans.map(p => `<button class="row" data-go="day/${p.tripId||'none'}_${p.date}"><span>${esc(p.title)}</span><span class="l">${fmtD(p.date)} · planned</span></button>`).join('')}</div>` : ''}
+    ${(() => { const bds = D.users().filter(u => u.birthday && u.birthday.slice(5,7) === ym.slice(5,7)); return bds.length ? `<div class="list" style="font-size:13.5px">${bds.map(u => { const d = ym + u.birthday.slice(7); return `<button class="row" data-go="day/${(D.tripForDate(d)||{}).id||'none'}_${d}"><span>${u.id === D.me().id ? 'Your birthday' : esc(u.name) + '\'s birthday'}</span><span class="l">${fmtD(d)} ›</span></button>`; }).join('')}</div>` : ''; })()}
     ${anniMoments.length ? `<div class="l">${fmtD(anniDay)} · ${D.monthsSince(anniDay)} months</div><div class="feed" style="margin-top:-8px">${anniMoments.map(momentRow).join('')}</div>` : ''}
     ${ms.filter(m => !anniMoments.includes(m)).length ? `<div class="l">Moments</div><div class="feed" style="margin-top:-8px">${ms.filter(m => !anniMoments.includes(m)).sort((a,b) => b.date.localeCompare(a.date)).slice(0,4).map(momentRow).join('')}</div>` : future ? '<div class="empty">Nothing here yet.</div>' : ''}
     ${!future ? `<button class="row" style="font-size:13.5px" data-go="chat"><span>Chat</span><span class="l">${D.bubbles().filter(b => isoDate(new Date(b.at)).startsWith(ym)).length} said or thought ›</span></button>` : ''}
@@ -752,23 +1047,24 @@ ACT.memNav = d => { memMonth.m += +d; if (memMonth.m < 0) { memMonth.m = 11; mem
 // ---------- export ----------
 ACT.exportTrip = async id => {
   const t = D.trip(id); if (!window.JSZip) return toast('Export library not loaded');
-  openSheet(`<div class="bar"><span>Export</span><span>${esc(t.city)} · ${MON[parseDate(t.start).getMonth()]}</span></div><div class="glass deep env"><div class="row"><span>Photos & polaroids</span><span class="l">${D.tripMoments(id).reduce((s,m)=>s+(m.photos||[]).length,0)}</span></div><div class="row"><span>Voice notes</span><span class="l">${D.tripMoments(id).filter(m=>m.voice).length}</span></div><div class="row"><span>Moments</span><span class="l">text</span></div><div class="row"><span>Budget</span><span class="l">.xlsx</span></div></div><div class="sub">Saves as one folder. On a phone the share sheet lets you put it in Google Drive.</div><button class="btn block" data-act="doExport|${id}">Save</button>`);
+  openSheet(`<div class="bar"><span>Export</span><span>${esc(t.city)} · ${MON[parseDate(t.start).getMonth()]}</span></div><div class="glass deep env"><div class="row"><span>Photos & polaroids</span><span class="l">${D.tripMoments(id).reduce((s,m)=>s+(m.photos||[]).length,0)}</span></div><div class="row"><span>Voice notes</span><span class="l">${D.tripMoments(id).reduce((s,m)=>s+D.voices(m).length,0)}</span></div><div class="row"><span>Moments</span><span class="l">text</span></div><div class="row"><span>Budget</span><span class="l">.xlsx</span></div></div><div class="sub">Saves as one folder. On a phone the share sheet lets you put it in Google Drive.</div><button class="btn block" data-act="doExport|${id}">Save</button>`);
 };
 ACT.doExport = async id => {
   const t = D.trip(id); const zip = new JSZip(); const folder = zip.folder(`${t.start.slice(0,4)} · ${t.city}`); const ms = D.tripMoments(id); let lines = [`${t.city} · ${t.start} – ${t.end}`, ''];
-  for (const m of ms) { const who = (D.user(m.authorId)||{}).name || ''; lines.push(`${m.date} · ${who}${m.text ? ' · ' + m.text : ''}${m.title ? ' · ' + m.title : ''}${m.cost && m.cost.amount ? ' · $' + m.cost.amount + ' (' + m.cost.tag + ')' : ''}${m.song ? ' · ' + m.song : ''}`); for (const [i, p] of (m.photos||[]).entries()) { const b = await Store.blob(p.asset); if (b) folder.file(`photos/${m.date}-${m.id}-${i}.jpg`, b); } if (m.voice) { const b = await Store.blob(m.voice); if (b) folder.file(`voice/${m.date}-${m.id}.${m.voice.split('.').pop()}`, b); } }
+  for (const m of ms) { const who = (D.user(m.authorId)||{}).name || ''; lines.push(`${m.date} · ${who}${m.text ? ' · ' + m.text : ''}${m.title ? ' · ' + m.title : ''}${D.costLines(m).map(c => ' · $' + c.amount + ' (' + (c.label ? c.label + ', ' : '') + c.tag + ')').join('')}${D.songs(m).map(x => ' · ' + x.url).join('')}`); for (const [i, p] of (m.photos||[]).entries()) { lines.push(p.caption ? `    photo ${i+1}: ${p.caption}` : ''); const b = await Store.blob(p.asset); if (b) folder.file(`photos/${m.date}-${m.id}-${i}.jpg`, b); } for (const [i, v] of D.voices(m).entries()) { const b = await Store.blob(v.asset); if (b) folder.file(`voice/${m.date}-${m.id}-${i}.${v.asset.split('.').pop()}`, b); } }
+  lines = lines.filter((l, i) => l !== '' || i < 2);
   folder.file('moments.txt', lines.join('\n')); const x = budgetWorkbook(t); if (x) folder.file('budget.xlsx', x); else folder.file('budget.csv', budgetCsv(t));
   const blob = await zip.generateAsync({ type:'blob' }); const f = new File([blob], `${t.city}-${t.start}.zip`, { type:'application/zip' }); closeSheet();
   if (navigator.canShare && navigator.canShare({ files:[f] })) { try { await navigator.share({ files:[f], title: t.city }); return; } catch (e) {} } download(blob, f.name); toast('Saved');
 };
-function budgetRows(t){ const rows = [['Date','Who','What','Category','Amount']]; D.tripMoments(t.id).filter(m => m.cost && m.cost.amount).forEach(m => rows.push([m.date, D.payerText(m), m.text||m.title||'', D.catLabel(t, m.cost.tag||'other'), +m.cost.amount])); const plan = D.tripPlan(t); rows.push([]); rows.push(['Plan']); D.cats(t).forEach(c => rows.push([c.label, '', '', '', plan[c.key]||0])); return rows; }
+function budgetRows(t){ const rows = [['Date','Who','What','Category','Amount']]; D.tripLines(t).forEach(c => rows.push([c.m.date, D.payerTextC(c), [c.label, c.m.text||c.m.title].filter(Boolean).join(' · '), D.catLabel(t, c.tag||'other'), +c.amount])); const plan = D.tripPlan(t); rows.push([]); rows.push(['Plan']); D.cats(t).forEach(c => rows.push([c.label, '', '', '', plan[c.key]||0])); return rows; }
 function budgetCsv(t){ return budgetRows(t).map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n'); }
 function budgetWorkbook(t){ if (!window.XLSX) return null; const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(budgetRows(t)), t.city.slice(0,30)); return XLSX.write(wb, { bookType:'xlsx', type:'array' }); }
 ACT.exportXlsx = id => { const t = D.trip(id); const x = budgetWorkbook(t); if (x) download(new Blob([x]), `${t.city}-${t.start}-budget.xlsx`); else download(new Blob([budgetCsv(t)], { type:'text/csv' }), `${t.city}-${t.start}-budget.csv`); };
 
 // ---------- boot ----------
 window.addEventListener('hashchange', () => { const [n, id] = location.hash.slice(1).split('/'); if (n && n !== route.name || id !== route.id) { route = { name: n || 'home', id }; render(); } });
-Store.onChange(() => { if (!sheet) render(); });
-Store.ready = Store.connect(CFG).then(() => { const [n, id] = location.hash.slice(1).split('/'); route = { name: n || 'home', id }; render(); setInterval(applySky, 60000); syncIcs(false); setInterval(() => syncIcs(false), 3600000); if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(()=>{}); });
+Store.onChange(() => { if (viewer) drawViewer(true); else if (!sheet) render(); });
+Store.ready = Store.connect(CFG).then(() => { const [n, id] = location.hash.slice(1).split('/'); route = { name: n || 'home', id }; render(); setInterval(applySky, 60000); syncIcs(false); checkPush(); setInterval(() => syncIcs(false), 3600000); if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(()=>{}); });
 window.DJ = { D, go, ACT, render, parseConfirmation, skyMode, Store };
 })();

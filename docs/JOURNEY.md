@@ -68,3 +68,26 @@ Two evenings of feedback rounds on real screens produced V2:
 - Home bubbles follow the pals and use the chat shapes; tapping a bubble opens the chat; a quiet "Chat ›" sits at the end of the line.
 - Budget planning per category: Total / Per day (Per night for Stay) × Both / Each, with the maths shown ("$200/day together · 5 days").
 - A cost can be paid by Both, split by % or $ (the other side fills itself in); who-paid bars and exports use the real shares.
+
+## V2.4 (first QA on the real home screen app)
+- Saves are local-first: the phone updates instantly and a background queue syncs to Supabase, retrying when offline. Nothing waits on the network any more.
+- The app catches up whenever it comes back to the front (iPhone pauses home screen apps). Something deleted on the other phone stays deleted instead of being re-uploaded.
+- Photos and voice notes made before signing in upload on sign-in. Blobs are stored as bytes (iPhone is unreliable storing Blob objects).
+- Buttons ignore a second tap while working; re-adding the same email updates the flights instead of duplicating them.
+- Google Calendar events are written in one batch, and only the ones that changed; the calendar list shows ~4 months with "Show more".
+- iOS: no zoom when tapping text boxes, no double-tap zoom, no rubber-band page.
+- Flights: first flight of a trip lands, last flies home (connecting legs handled); "Who flies" defaults to whoever doesn't live where the first flight lands; flight numbers come from the leg's own line (the PDF had given both legs F8 603). The uploaded confirmation file is kept on the booking.
+- Voice: records in a format the iPhone supports, Save waits for the recording to finish, clear messages when the microphone is blocked.
+
+## V2.5 (memories, photos, flights, occasions, birthdays)
+- Memories hold any number of photos, voice notes, songs and cost lines; every item has a ✕. Cost lines have a label, category, who paid (or Both with a % / $ split) and each lands in its own Budget category. Old memories convert when edited; nothing is lost.
+- Tap any photo for a full-screen viewer: swipe, caption, comments (their own records, so two people commenting never overwrite each other), save to phone, delete (the file is removed from storage too).
+- Flights have their own sheet: "Shows as" title, route, number, date, times, who flies, cost / paid by, trip, the uploaded confirmation, link to the return flight.
+- Occasions: a one-off budget for a date or range (birthday, anniversary, Christmas), optionally hidden from the other person — the occasion and every cost in it. Memories pick Trip / Occasion / None. Occasion costs don't count toward the monthly envelopes.
+- Birthdays: in Profile, on the calendar every year, a birthday sheet (present, hidden birthday budget, wishlist, calendar reminder a week before / your own: wish, wishlist), a wrapped present that opens at midnight in their time zone and becomes a memory, a wish capsule sealed until next birthday, a wishlist where "I got this" is invisible to its owner, a birthday Home (party hat, present, confetti), and a week-before line on the giver's Home.
+- Honest limit: "hidden" is enforced by the app, not the database — both accounts can technically read every record.
+
+## V2.6 (notifications)
+- Real phone notifications (Web Push) from a Supabase Edge Function. Instant: bubbles, new memories, comments, new plans, "opened your present". Reminders every 15 minutes: trips (a week and a day before), flights (an hour before landing, and landed), birthdays (a week before, the day of, and your own), the morning of the 23rd.
+- Only ever about the other person; nothing hidden triggers anything; each reminder is sent once; old records syncing for the first time don't replay as a flood; every type has its own switch.
+- Tests: the function's logic runs against a fake database, push service and clock (20 checks, including time zones — the 23rd arrives at 9am Toronto for Jett and 9am Vancouver for Des).
