@@ -95,3 +95,8 @@ Two evenings of feedback rounds on real screens produced V2:
 ## V2.7 (joining)
 - A new phone can join from the Setup screen ("Joining someone? Sign in instead") instead of accidentally setting up over the first person's profile.
 - Sign-in by a 6-digit code typed into the app (the email link opens Safari, which is a separate app on iPhone).
+
+## V2.8 (budget categories, trip emails)
+- A cost can no longer vanish from the Budget: anything in a removed category shows under "Other". Removing a category no longer relabels its costs, and removed categories come back with one tap ("Removed: Flight ↺"). Flight costs always count as Flight.
+- Deleting an item and removing a category are separate: every item on a category page has its own ✕ (a flight is deleted like "Delete flight"); "Remove the … category" sits apart at the bottom and, if the category has costs, asks whether to move them to another category or delete them.
+- Trip emails list shows dates, trip, amount and when it was added; tap to open the trip; ✕ removes it from the list (what it added stays).
