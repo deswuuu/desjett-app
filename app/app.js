@@ -166,7 +166,7 @@ function renderSetup(app){
   const d = setupData;
   const cityOpts = c => Object.keys(CITIES).map(k => `<option ${k===c?'selected':''}>${k}</option>`).join('');
   const steps = {
-    1: `<div class="bar"><span>Setup</span><span>1 / 3</span></div><h1 class="hd">Who's who</h1>
+    1: `<div class="bar"><span>Setup</span><span>1 / 3</span></div>${Store.mode === 'supabase' && !Store.user ? `<div class="glass deep">${signinHTML('Joining someone? Sign in instead')}</div>` : ''}<h1 class="hd">Who's who</h1>
       <div class="glass" style="display:flex;flex-direction:column;gap:12px">
         <div class="pick"><button class="${d.a.pal==='bunny'?'on':''}" data-act="setPal|a,bunny"><i class="pal bunny"></i>Bunny</button><button class="${d.a.pal==='puppy'?'on':''}" data-act="setPal|a,puppy"><i class="pal puppy"></i>Puppy</button></div>
         <input class="in" id="s-a-name" placeholder="Your name" value="${esc(d.a.name)}"><select class="in" id="s-a-city">${cityOpts(d.a.city)}</select>
@@ -207,10 +207,16 @@ ACT.setupDone = async () => {
   localStorage.setItem('dj.me', a.id); howtoIdx = 0; go('howto');
 };
 function renderWho(app){
-  app.innerHTML = `<div class="screen" style="min-height:calc(100vh - 140px);justify-content:center"><h1 class="hd center">Which one are you?</h1><div class="pick">${D.users().map(u => `<button data-act="iam|${u.id}"><i class="pal ${u.pal}"></i>${esc(u.name)}</button>`).join('')}</div>${Store.mode === 'supabase' && !Store.user ? `<div class="glass"><div class="l">Sign in to sync</div><input class="in" id="email" placeholder="email"><button class="btn block" style="margin-top:8px" data-act="signin">Send magic link</button></div>` : ''}</div>`; bind(app);
+  app.innerHTML = `<div class="screen" style="min-height:calc(100vh - 140px);justify-content:center"><h1 class="hd center">Which one are you?</h1><div class="pick">${D.users().map(u => `<button data-act="iam|${u.id}"><i class="pal ${u.pal}"></i>${esc(u.name)}</button>`).join('')}</div>${Store.mode === 'supabase' && !Store.user ? `<div class="glass">${signinHTML('Sign in to sync')}</div>` : ''}</div>`; bind(app);
 }
 ACT.iam = id => { localStorage.setItem('dj.me', id); go('home'); };
-ACT.signin = async () => { try { await Store.signIn($('#email').value.trim()); toast('Check your email'); } catch (e) { toast(e.message); } };
+let signinEmail = '';
+function signinHTML(title){ return signinEmail
+  ? `<div class="l">${esc(title)}</div><div class="sub" style="margin-top:2px">We emailed a code to ${esc(signinEmail)}. Type it here — it signs in this app, not Safari.</div><input class="in" id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code" style="margin-top:8px;font-size:20px;letter-spacing:.2em;text-align:center"><div class="row" style="margin-top:8px"><button class="l" data-act="signinBack">Use a different email</button><button class="btn sm" data-act="signinCode">Sign in</button></div>`
+  : `<div class="l">${esc(title)}</div><input class="in" id="email" type="email" autocomplete="email" placeholder="your email" style="margin-top:8px"><button class="btn block" style="margin-top:8px" data-act="signin">Send me a code</button>`; }
+ACT.signin = async () => { const email = ($('#email') || {}).value; if (!email || !email.trim()) return toast('Your email, please'); try { await Store.signIn(email.trim()); signinEmail = email.trim(); toast('Check your email'); if (sheet) ACT.signinSheet(); else render(); } catch (e) { toast(e.message); } };
+ACT.signinBack = () => { signinEmail = ''; if (sheet) ACT.signinSheet(); else render(); };
+ACT.signinCode = async () => { const code = (($('#code') || {}).value || '').replace(/\s/g, ''); if (!/^\d{6,10}$/.test(code)) return toast('The code from the email, please'); try { await Store.verifyCode(signinEmail, code); signinEmail = ''; closeSheet(); toast('Signed in'); render(); } catch (e) { toast(/expired|invalid/i.test(e.message) ? 'That code didn\'t work — send a new one' : e.message); } };
 
 // ---------- home ----------
 function renderHome(app){
@@ -876,7 +882,7 @@ ACT.sky = p => D.saveSettings({ sky: p }).then(render);
 ACT.switchUser = () => { localStorage.removeItem('dj.me'); render(); };
 ACT.resetAll = async () => { if (await ask('Start over?', { sub: 'Erases everything on this phone. Anything synced stays in Supabase.', ok: 'Erase' })) { Store.wipe(); localStorage.removeItem('dj.me'); setupStep = 1; render(); } };
 ACT.signout = async () => { await Store.signOut(); render(); };
-ACT.signinSheet = () => openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Sync</span></div><input class="in" id="email" placeholder="email"><button class="btn block" data-act="signin">Send magic link</button>`);
+ACT.signinSheet = () => openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Sync</span></div>${signinHTML('Sign in to sync')}`);
 ACT.exportAll = () => download(new Blob([Store.exportJSON()], { type:'application/json' }), 'des-jett-backup.json');
 ACT.importAll = () => { const f = document.createElement('input'); f.type = 'file'; f.accept = '.json'; f.onchange = async () => { await Store.importJSON(await f.files[0].text()); toast('Restored'); render(); }; f.click(); };
 function occSheet(o, editing){ const other = D.other() || { name: 'them' };

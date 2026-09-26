@@ -141,6 +141,8 @@
       window.addEventListener('online', () => { if (sbUser) { Store.pull(); } });
       window.addEventListener('pageshow', e => { if (e.persisted && sbUser) Store.pull(); });
     },
+    // the email carries both a link and a 6-digit code; the code works inside the Home Screen app
+    async verifyCode(email, token){ if (!sb) return; const { data, error } = await sb.auth.verifyOtp({ email, token, type: 'email' }); if (error) throw error; const u = data && (data.user || (data.session && data.session.user)); if (u) { const was = sbUser; sbUser = u; Store.user = u; if (!was) await Store.pull(); emit(); } },
     async signIn(email){ if (!sb) return; const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } }); if (error) throw error; },
     async signOut(){ if (sb) await sb.auth.signOut(); },
     async pull(){

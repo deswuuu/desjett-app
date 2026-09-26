@@ -91,3 +91,7 @@ Two evenings of feedback rounds on real screens produced V2:
 - Real phone notifications (Web Push) from a Supabase Edge Function. Instant: bubbles, new memories, comments, new plans, "opened your present". Reminders every 15 minutes: trips (a week and a day before), flights (an hour before landing, and landed), birthdays (a week before, the day of, and your own), the morning of the 23rd.
 - Only ever about the other person; nothing hidden triggers anything; each reminder is sent once; old records syncing for the first time don't replay as a flood; every type has its own switch.
 - Tests: the function's logic runs against a fake database, push service and clock (20 checks, including time zones — the 23rd arrives at 9am Toronto for Jett and 9am Vancouver for Des).
+
+## V2.7 (joining)
+- A new phone can join from the Setup screen ("Joining someone? Sign in instead") instead of accidentally setting up over the first person's profile.
+- Sign-in by a 6-digit code typed into the app (the email link opens Safari, which is a separate app on iPhone).
