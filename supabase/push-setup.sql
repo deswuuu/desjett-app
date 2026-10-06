@@ -6,7 +6,7 @@ create extension if not exists pg_cron;
 -- 1. when something changes, tell the function (only the kinds of records that can notify)
 create or replace function public.dj_notify() returns trigger language plpgsql security definer as $$
 begin
-  if new.collection in ('bubbles','moments','comments','presents','pushtest') then
+  if new.collection in ('bubbles','moments','comments','presents','pushtest','imports') then
     perform net.http_post(
       url := 'https://YOUR-PROJECT-REF.supabase.co/functions/v1/notify',
       headers := jsonb_build_object('Content-Type','application/json','x-notify-secret','YOUR-NOTIFY-SECRET'),

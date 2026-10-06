@@ -54,6 +54,12 @@ It opens full-screen with the icon, works offline for browsing, and new moments 
 | Occasions | One-off budgets for a date or range, optionally hidden. In Between visits. |
 | Memories | By month, with arrows either side: Month N ♥ above the month name, trips, days together, meals, moments, covers, "together in [month]" total (trips + envelopes), the 23rd's moments, and an all-time row. Future months are tappable and show what's coming. |
 | Every 23rd | Set "Together since" in setup or Profile. On the 23rd: Home turns blush and the pals sit together, the heading is "N months", bubble chips get "happy N months"; the calendar shows a small heart under the date; that day's page is headed "N months ♥" with a strip of other 23rds. |
+| Chat | Home → Chat ›. Type (💭 for a thought), send photos (they stay; tap to save), stickers. Unread shows as a dot and as the number on the app icon. |
+| Stickers | The two pals plus your own, shared: Paste a cut-out from Photos (press and hold → Copy) or choose any picture. Hold one to remove it. On photos (day page) and in chat. |
+| Lists | Home → Things to do together: To cook, To do, Places to go, To watch, plus your own. Tick → make it a memory. Items with a city show on that trip. |
+| Songs, map, on this day | Memories → Our songs / Our map. On this day appears on Home when there's a memory from this date a month, months or a year ago. |
+| Import photos | On a trip: pick a pile of photos; they're sorted into days and moments by the time they were taken (and place, when the photo has it), named from your plans; check, then Make memories. |
+| Backup | Profile → Export everything (one zip with every photo, voice note, text copies, budgets, and backup.json) → Restore a backup takes the zip back. |
 | Skies | Follows real sunrise and sunset for each city: morning (blue into peach), day, sunset (blush, orange low), night (violet dusk). The other pal stands in the glow of their time of day. Same city on trip days → one sky. |
 
 ## Things that need one more account (phase two)

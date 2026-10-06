@@ -157,9 +157,9 @@ function render(){
   const app = $('#app'); const s = D.settings();
   if (!s.setup) return renderSetup(app);
   if (!D.me()) return renderWho(app);
-  const R = { notify: renderNotify, chat: renderChat, howto: renderHowto, gcal: renderGcal, cat: renderCategory, home: renderHome, trips: renderTrips, trip: renderTrip, days: renderDays, budget: renderBudget, photos: renderPhotos, day: renderDay, calendar: renderCalendar, profile: renderProfile, memories: renderMemories, between: renderBetween, emails: renderEmails, moments: renderMoments };
+  const R = { notify: renderNotify, chat: renderChat, howto: renderHowto, gcal: renderGcal, cat: renderCategory, home: renderHome, trips: renderTrips, trip: renderTrip, days: renderDays, budget: renderBudget, photos: renderPhotos, day: renderDay, calendar: renderCalendar, profile: renderProfile, memories: renderMemories, between: renderBetween, emails: renderEmails, moments: renderMoments, lists: renderLists, list: renderList, songs: renderSongs, map: renderMap, import: renderImport };
   (R[route.name] || renderHome)(app);
-  bind(app);
+  bind(app); bindHold(app); updateBadge();
 }
 
 // ---------- setup ----------
@@ -222,7 +222,7 @@ ACT.signinCode = async () => { const code = (($('#code') || {}).value || '').rep
 
 // ---------- home ----------
 function renderHome(app){
-  const me = D.me(), other = D.other(), t = D.nextTrip(), now = new Date();
+  const me = D.me(), other = D.other(), t = D.nextTrip(), now = new Date(); markSeen('home');
   const days = t ? daysBetween(today(), t.start) : null;
   const mine = D.latestBubble(me.id), theirs = other && D.latestBubble(other.id); const everBubbled = D.bubbles().length > 0;
   const [L, R] = D.users2();
@@ -231,9 +231,11 @@ function renderHome(app){
   const glow = { morning:'#FDE8D3', day:'#FFFFFF', sunset:'#F39F5A', night:'#502D55' };
   const anni = D.isMonthiversary(today()), months = D.monthsSince(today());
   const gap = days == null ? 0 : Math.max(0, Math.min(1, days / 60)); const travel = Math.max(0, (Math.min(480, window.innerWidth) - 52 - 220) / 2); const px = (anni || sameCity) ? Math.round(travel + 6) : Math.round((1 - gap) * travel - 4);
-  const bub = (b, side) => b ? `<button class="bub ${b.kind} ${side}" data-go="chat" style="${side==='r'?'right:'+(6+px):'left:'+(6+px)}px;top:${b.kind==='think'?0:6}px">${esc(b.text)}</button>` : '';
+  // long bubbles stop at the middle and show two lines, then "…" (the whole thing is in Chat)
+  const bub = (b, side) => b ? `<button class="bub ${b.kind} ${side}" data-go="chat" style="${side==='r'?'right:'+(6+px):'left:'+(6+px)}px;top:${b.kind==='think'?0:6}px;max-width:min(150px, calc(50% - ${14+px}px))"><span class="bt">${esc(b.text)}</span></button>` : '';
   const flightDay = t && today() === t.start && D.tripMoments(t.id).find(m => m.flight);
   const cost = t ? D.tripCost(t) : null, plan = t ? D.planTotal(t) : 0;
+  const lastTrip = !t ? D.trips().filter(x => x.end < today()).slice(-1)[0] || null : null;
   const recent = D.moments().filter(m => m.kind !== 'plan' && m.kind !== 'booking').sort((a,b) => (b.date+b.createdAt).localeCompare(a.date+a.createdAt)).slice(0,3);
   // birthdays, each judged in that person's own time zone
   const isBday = u => !!(u && u.birthday && todayIn(u).slice(5) === u.birthday.slice(5));
@@ -250,7 +252,7 @@ function renderHome(app){
       ${[L,R].map((u,i) => u ? `<div class="side ${i?'r':''} ${u.id===me.id?'me':''}"><span class="d">${u.id===me.id && !i ? `<button data-go="profile"><i class="pal ${u.pal}"></i></button> ` : ''}${sameCity && i ? '' : dateIn(u, now) + ' · ' + timeIn(u, now)} <span id="wx-${u.id}"></span>${u.id===me.id && i ? ` <button data-go="profile"><i class="pal ${u.pal}"></i></button>` : ''}</span><span class="c">${sameCity && i ? esc(me.name) + ' &amp; ' + esc(other.name) : esc(u.city)}</span></div>` : '').join('')}
     </div>
     <div class="meet">
-      <button class="track" data-go="chat" style="height:12px;bottom:3px;background:transparent"><span style="display:block;height:1px;background:var(--ln);margin-top:5px"></span></button><button class="chatlink" data-go="chat">Chat ›</button><div class="tick" style="left:24px"></div><div class="tick" style="left:50%"></div><div class="tick" style="right:24px"></div>
+      <button class="track" data-go="chat" style="height:12px;bottom:3px;background:transparent"><span style="display:block;height:1px;background:var(--ln);margin-top:5px"></span></button><button class="chatlink" data-go="chat">${unreadChat() ? '<i class="dot"></i>' : ''}Chat ›</button><div class="tick" style="left:24px"></div><div class="tick" style="left:50%"></div><div class="tick" style="right:24px"></div>
       ${other && theirMode !== myMode && !sameCity ? `<div class="halo" style="${me.pal==='bunny'?'right':'left'}:-10px;background:${glow[theirMode]};opacity:.75"></div>` : ''}
       ${bub(me.pal==='bunny'?mine:theirs, 'l')}${bub(me.pal==='bunny'?theirs:mine, 'r')}${deco}
       <button data-act="bubble|${me.pal==='bunny'?me.id:(other?other.id:'')}"><i class="pal lg bunny" style="transform:translateX(${px}px)"></i></button>
@@ -258,10 +260,12 @@ function renderHome(app){
     </div>
     ${!everBubbled ? '<div class="l center" style="margin-top:-8px">tap a pal to say or think something</div>' : ''}
     ${bdUser ? `<div class="conf">${Array.from({length:24}, (_, i) => `<i style="left:${6 + (i*37)%88}%;top:${(i*53)%26}%;background:${['#F2B8C6','#F6E39A','#B9D3C9','#C4D4E6'][i%4]};transform:rotate(${i*41}deg)"></i>`).join('')}</div>` : ''}
-    ${bdUser ? `<div class="center"><div class="hd md">${myBday ? 'Happy birthday, ' + esc(me.name) + '!' : esc(other.name) + '\'s birthday!'}</div><div class="sub">${myBday ? (myGift ? (myGift.openedAt ? 'from ' + esc(other.name) + ' ♡' : 'from ' + esc(other.name) + ' · tap your present') : '') : theirGift ? (theirGift.openedAt ? 'your present was opened ♡' : 'your present is waiting') : `<button class="l" data-act="presentFor|${other.id},${todayIn(other)}">wrap a present ›</button>`}${anni ? (myGift || theirGift || !myBday ? ' · ' : '') + months + ' Month' + (months===1?'':'s') : ''}</div>${myBday ? `<button class="chip" style="margin-top:10px;font-size:12px" data-act="wishSheet">Make a wish</button>` : ''}</div>` : anni ? `<div class="center"><div class="hd md">${months} Month${months===1?'':'s'}!</div><div class="sub">since ${fmtD(D.anniversary())}${t && !sameCity ? ' · ' + esc(t.city) + (days > 0 ? ' in ' + days + ' days' : ' today') : ''}</div></div>` : t ? `<div class="center"><div class="hd md">${sameCity ? 'Together' : esc(t.city)}</div><div class="sub">${sameCity ? esc(t.city) + ' · day ' + (daysBetween(t.start, today())+1) + ' of ' + (daysBetween(t.start,t.end)+1) : fmtD(t.start) + (days > 0 ? ' · ' + days + ' days' : ' · today') + (t.flyer ? ' · ' + esc((D.user(t.flyer)||{}).name||'') + ' flies' : '')}</div></div>` : `<div class="center"><div class="hd md">No trip yet</div><div class="sub" style="margin-top:8px">Add one in Trips</div></div>`}
-    ${flightDay ? flightCard(flightDay) : t ? `<button class="glass tap" data-go="trip/${t.id}"><div class="row"><span class="l">Upcoming trip</span><span class="l">of ~${money(plan)}</span></div><div class="row" style="margin-top:8px"><span class="num">${money(cost.total)}</span><span class="sub">${cost.total <= plan ? 'on track' : 'a bit over'}</span></div></button>` : ''}
+    ${bdUser ? `<div class="center"><div class="hd md">${myBday ? 'Happy birthday, ' + esc(me.name) + '!' : esc(other.name) + '\'s birthday!'}</div><div class="sub">${myBday ? (myGift ? (myGift.openedAt ? 'from ' + esc(other.name) + ' ♡' : 'from ' + esc(other.name) + ' · tap your present') : '') : theirGift ? (theirGift.openedAt ? 'your present was opened ♡' : 'your present is waiting') : `<button class="l" data-act="presentFor|${other.id},${todayIn(other)}">wrap a present ›</button>`}${anni ? (myGift || theirGift || !myBday ? ' · ' : '') + months + ' Month' + (months===1?'':'s') : ''}</div>${myBday ? `<button class="chip" style="margin-top:10px;font-size:12px" data-act="wishSheet">Make a wish</button>` : ''}</div>` : anni ? `<div class="center"><div class="hd md">${months} Month${months===1?'':'s'}!</div><div class="sub">since ${fmtD(D.anniversary())}${t && !sameCity ? ' · ' + esc(t.city) + (days > 0 ? ' in ' + days + ' days' : ' today') : ''}</div></div>` : t ? `<div class="center"><div class="hd md">${sameCity ? 'Together' : esc(t.city)}</div><div class="sub">${sameCity ? esc(t.city) + ' · day ' + (daysBetween(t.start, today())+1) + ' of ' + (daysBetween(t.start,t.end)+1) : fmtD(t.start) + (days > 0 ? ' · ' + days + ' days' : ' · today') + (t.flyer ? ' · ' + esc((D.user(t.flyer)||{}).name||'') + ' flies' : '')}</div></div>` : `<div class="center"><div class="hd md">${lastTrip ? 'Next trip?' : 'No trip yet'}</div><div class="sub" style="margin-top:8px">Add one in Trips</div></div>`}
+    ${flightDay ? flightCard(flightDay) : t ? `<button class="glass tap" data-go="trip/${t.id}"><div class="row"><span class="l">${sameCity ? 'This trip · day ' + (daysBetween(t.start, today())+1) + ' of ' + (daysBetween(t.start,t.end)+1) : 'Upcoming trip · ' + esc(t.city)}</span><span class="l">of ~${money(plan)}</span></div><div class="row" style="margin-top:8px"><span class="num">${money(cost.total)}</span><span class="sub">${cost.total <= plan ? 'on track' : 'a bit over'}</span></div></button>` : lastTrip ? `<button class="glass tap" data-go="trip/${lastTrip.id}"><div class="row"><span class="l">Last trip · ${esc(lastTrip.city)}</span><span class="l">${fmtD(lastTrip.start)} – ${fmtD(lastTrip.end)}</span></div><div class="row" style="margin-top:8px"><span class="num">${money(D.tripCost(lastTrip).total)}</span><span class="sub">${D.tripMoments(lastTrip.id).filter(m => m.kind === 'moment').length} memories</span></div></button>` : ''}
+    ${onThisDayHTML()}
     ${soon != null && soon >= 1 && soon <= 7 ? `<button class="glass pill row tap" style="display:flex" data-act="birthdaySheet|${other.id},${soonDate}"><span class="l">${esc(other.name)}'s birthday ${soon === 1 ? 'tomorrow' : 'in ' + soon + ' days'}</span><span style="font-size:13px;font-weight:500">${soonGift ? 'present wrapped ✓' : 'wrap a present ›'}</span></button>` : ''}
     <button class="glass pill row tap" style="display:flex" data-go="between"><span class="l">${MONTHS[now.getMonth()]} budget</span><span style="font-size:13px;font-weight:500">${money(D.envelopeMonthly())}</span></button>
+    <button class="glass pill row tap" style="display:flex" data-go="lists"><span class="l">Things to do together</span><span style="font-size:13px;font-weight:500">${(() => { const n = D.listItems().filter(i => !i.done).length; return n ? n + ' on the list ›' : 'start a list ›'; })()}</span></button>
     <div class="l">Recent memories</div>
     <div class="feed" style="margin-top:-8px">${recent.length ? recent.map(momentRow).join('') : '<div class="empty">Nothing yet. Tap + to add a moment.</div>'}</div>
   </div><button class="fab" data-act="newMoment">+</button>${nav('home')}`;
@@ -295,14 +299,6 @@ ACT.bubble = uid => {
   openSheet(draw(), () => $('#bub-text').focus());
 };
 ACT.closeSheet = () => closeSheet();
-
-// ---------- chat ----------
-function renderChat(app){
-  const me = D.me(); const all = D.bubbles().slice().sort((a,b) => a.at - b.at); let lastDay = '';
-  const rows = all.map(b => { const d = new Date(b.at); const day = isoDate(d); const sep = day !== lastDay ? `<div class="daysep">${day === today() ? 'Today' : fmtD(day)}</div>` : ''; lastDay = day; const u = D.user(b.userId) || {}; const mode = skyMode(u, d); return sep + `<div class="msg ${b.userId === me.id ? 'me' : ''}"><i class="pal ${u.pal||'bunny'}"></i><div><div class="b ${b.kind === 'think' ? 'think' : ''}">${esc(b.text)}</div><div class="t">${timeIn(u, d)} ${wx(mode === 'night' ? 'moon' : 'sun')}</div></div></div>`; }).join('');
-  const month = all.filter(b => isoDate(new Date(b.at)).slice(0,7) === today().slice(0,7)).length;
-  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="home">‹ Home</button><span>Chat</span></div><div class="row"><span class="hd" style="font-size:32px">${D.users2().map(u => `<i class="pal ${u.pal}" style="width:28px;height:28px;vertical-align:-6px"></i>`).join('')}</span><span class="l">${month} this month</span></div><div class="chat">${rows || '<div class="empty">Nothing said yet. Tap a pal on Home.</div>'}</div></div>${nav('home')}`;
-}
 
 // ---------- trips ----------
 let tripsTab = 'upcoming';
@@ -356,7 +352,7 @@ function renderTrip(app){
     ${style === 'polaroid' ? `<div class="polas">${photos.slice(0,2).map(ph => polaroid(D.moments().find(x => x.id === ph.m.id).photos.find(p => p.asset === ph.asset), ph.m, false, 'trip:' + t.id)).join('')}<button class="pola empty" data-act="newMoment|${t.id}"><div class="ph">+</div></button></div>` : `<div class="clean">${photos.slice(0,3).map(ph => `<button class="ph" data-act="viewPh|trip:${t.id},${ph.m.id},${ph.m.photos.findIndex(p => p.asset === ph.asset)}"><img data-asset="${ph.asset}" alt=""></button>`).join('')}<button class="ph" style="display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:300;color:var(--mu)" data-act="newMoment|${t.id}">+</button></div>`}
     <div class="stats"><div><b>${Math.min(nDays, Math.max(0, today() > t.end ? nDays : dayN))}</b><span class="l">days</span></div><div><b>${meals}</b><span class="l">meals</span></div><div><b>${mm.length}</b><span class="l">moments</span></div></div>
     <div class="tiles"><button data-go="days/${t.id}"><b>Days</b><span>${todayPlan ? esc(todayPlan.title||todayPlan.text) : nDays + ' days'}</span></button><button data-go="budget/${t.id}"><b>Budget</b><span>${money(c.total)} of ~${money(p)}</span></button><button data-go="photos/${t.id}"><b>Photos</b><span>${photos.length}</span></button></div>
-    <div class="list" style="font-size:13.5px;margin-top:-4px"><button class="row" data-go="moments/${t.id}"><span>All moments</span><span class="l">${mm.length} ›</span></button><button class="row" data-go="emails/${t.id}"><span>Add a booking from an email</span><span class="l">›</span></button><button class="row" data-act="exportTrip|${t.id}"><span>Export</span><span class="l">›</span></button><button class="row" data-act="editTrip|${t.id}"><span>Edit trip</span><span class="l">›</span></button></div>
+    <div class="list" style="font-size:13.5px;margin-top:-4px"><button class="row" data-act="importStart|${t.id}"><span>Import photos</span><span class="l">sorts them into days ›</span></button>${(() => { const n = D.listItems().filter(i => !i.done && i.city && cityKey(i.city) === cityKey(t.city)).length; return n ? `<button class="row" data-go="list/city~${encodeURIComponent(t.city)}"><span>On your list for ${esc(t.city)}</span><span class="l">${n} ›</span></button>` : ''; })()}<button class="row" data-go="moments/${t.id}"><span>All moments</span><span class="l">${mm.length} ›</span></button><button class="row" data-go="emails/${t.id}"><span>Add a booking from an email</span><span class="l">›</span></button><button class="row" data-act="exportTrip|${t.id}"><span>Export</span><span class="l">›</span></button><button class="row" data-act="editTrip|${t.id}"><span>Edit trip</span><span class="l">›</span></button></div>
   </div>${nav('trips')}`;
 }
 ACT.editTrip = id => { const t = D.trip(id); const users = D.users(); openSheet(`<div class="bar"><button data-act="closeSheet">Cancel</button><span>Edit</span></div><input class="in big" id="t-city" value="${esc(t.city)}"><div class="row"><input class="in" type="date" id="t-start" value="${t.start}"><input class="in" type="date" id="t-end" value="${t.end}"></div><div class="seg">${users.map(u => `<button class="${u.id===t.flyer?'on':''}" data-act="segPick|tFlyer,${u.id}">${esc(u.name)}</button>`).join('')}</div><div class="row"><button class="btn lite" data-act="deleteTrip|${id}">Delete trip</button><button class="btn" data-act="updateTrip|${id}">Save</button></div>`, sh => sh.dataset['tFlyer'] = t.flyer || ''); };
@@ -446,7 +442,7 @@ function renderMoments(app){ const t = D.trip(route.id); const ms = D.tripMoment
 
 // ---------- day page ----------
 function polaroid(ph, m, draggable, scope){
-  const idx = m.photos.indexOf(ph); const stickers = (ph.stickers||[]).map((s,i) => `<i class="stk ${s.pal}" data-stk="${m.id},${idx},${i}" style="left:${s.x}px;top:${s.y}px;transform:rotate(${s.rot||0}deg)"></i>`).join('');
+  const idx = m.photos.indexOf(ph); const stickers = (ph.stickers||[]).map((s,i) => stkHTML(s, 'stk', `data-stk="${m.id},${idx},${i}" style="left:${s.x}px;top:${s.y}px;transform:rotate(${s.rot||0}deg)"`)).join('');
   return `<div class="pola" data-pola="${m.id},${idx}" data-view="${scope || 'day:' + (m.tripId || 'none') + '_' + m.date},${m.id},${idx}" style="transform:rotate(${(idx%2?4:-4)}deg)"><div class="ph"><img data-asset="${ph.asset}" alt=""></div><span class="dt">${ph.caption ? esc(ph.caption) : palOf(m.authorId) + ' ' + m.date.replace(/-/g,' · ').slice(5) + ' · ' + m.date.slice(2,4)}</span>${stickers}</div>`;
 }
 function renderDay(app){
@@ -459,22 +455,23 @@ function renderDay(app){
   const other23 = anni ? D.moments().filter(m => D.isMonthiversary(m.date) && m.date !== date && m.photos && m.photos.length).sort((a,b) => b.date.localeCompare(a.date)).slice(0,5) : [];
   app.innerHTML = `<div class="screen"><div class="bar"><button data-go="${t ? (t.occasion ? 'budget/' : 'days/') + t.id : 'calendar'}">‹ ${t ? esc(t.city) : 'Calendar'}</button><span>${fmtDow(date)}</span></div><h1 class="hd" style="font-size:34px">${bds.length && !plan ? bds.map(u => u.id === D.me().id ? 'Your birthday' : esc(u.name) + '\'s birthday').join(' & ') : anni ? `${months} month${months===1?'':'s'} <i class="heart lg"></i>` : plan ? esc(plan.title||plan.text) + (plan.who && plan.who !== 'both' ? ' ' + palOf(plan.who) : '') : fmtD(date)}</h1>${anni ? `<div class="sub" style="margin-top:-6px">since ${fmtD(D.anniversary())}${plan ? ' · ' + esc(plan.title||plan.text) : ''}</div>` : plan && plan.note ? `<div class="sub">${esc(plan.note)}</div>` : ''}
     ${anni ? `<div class="l">Other ${ordinal(+date.slice(8))}s</div><div class="strip23" style="margin-top:-8px">${other23.map(m => `<button data-go="day/${m.tripId||'none'}_${m.date}"><div class="ph"><img data-asset="${m.photos[0].asset}" alt=""></div><span class="l">${MON[parseDate(m.date).getMonth()]} · ${D.monthsSince(m.date)}</span></button>`).join('')}${(() => { const nd = new Date(parseDate(date)); nd.setMonth(nd.getMonth()+1); const ni = isoDate(nd); return `<button data-go="day/none_${ni}"><div class="ph empty"></div><span class="l">${MON[nd.getMonth()]} · ${D.monthsSince(ni)}</span></button>`; })()}</div>` : ''}
-    ${photos.length ? style === 'polaroid' ? `<div class="polas">${photos.map(({p, m}) => polaroid(p, m, true)).join('')}</div><div class="stkrow"><span class="l">Stickers</span>${D.users().map(u => `<button data-act="addSticker|${u.pal}"><i class="pal ${u.pal}"></i></button>`).join('')}<span class="l">tap, then drag on a photo</span></div>` : `<div class="clean">${photos.map(({p, m}) => `<button class="ph" data-act="viewPh|day:${route.id},${m.id},${m.photos.indexOf(p)}"><img data-asset="${p.asset}" alt=""></button>`).join('')}</div>` : ''}
+    ${photos.length ? style === 'polaroid' ? `<div class="polas">${photos.map(({p, m}) => polaroid(p, m, true)).join('')}</div><div class="stkrow"><span class="l">Stickers · tap one, then a photo</span>${stickerTray('addSticker')}</div>` : `<div class="clean">${photos.map(({p, m}) => `<button class="ph" data-act="viewPh|day:${route.id},${m.id},${m.photos.indexOf(p)}"><img data-asset="${p.asset}" alt=""></button>`).join('')}</div>` : ''}
     ${ms.filter(m => m.kind !== 'plan').map(m => dayBlock(m, t)).join('')}
     ${!ms.length ? '<div class="empty">Nothing here yet.</div>' : ''}
-    <div class="row mt-auto"><span class="l">${ms.filter(m=>m.kind!=='plan').length} moments${meals ? ' · ' + meals + ' meal' + (meals>1?'s':'') : ''}${cost ? ' · ' + money(cost) : ''}</span><span style="display:flex;gap:6px">${!plan ? `<button class="btn sm lite" data-act="addPlan|${date}${t?','+t.id:''}">Plan</button>` : `<button class="btn sm lite" data-act="editPlan|${plan.id}">Edit plan</button>`}<button class="btn sm" data-act="newMoment|${t ? t.id : ''},${date}">+ Add</button></span></div>
+    <div class="row mt-auto"><span class="l">${ms.filter(m=>m.kind!=='plan').length} moments${meals ? ' · ' + meals + ' meal' + (meals>1?'s':'') : ''}${cost ? ' · ' + money(cost) : ''}</span><span style="display:flex;gap:6px">${!plan ? `<button class="btn sm lite" data-act="addPlan|${date}${t?','+t.id:''}">+ Plan</button>` : `<button class="btn sm lite" data-act="editPlan|${plan.id}">Edit plan</button>`}<button class="btn sm" data-act="newMoment|${t ? t.id : ''},${date}">+ Add</button></span></div>
   </div>${nav(t ? 'trips' : 'calendar')}`;
   setupStickerDrag(app);
 }
 function songCard(sg, by){ const id = ((sg.url||'').match(/track\/([A-Za-z0-9]+)/)||[])[1]; return `<div class="glass" style="padding:12px 14px"><div class="row"><div class="who">${palOf(by)}<div><b style="font-size:13.5px;font-weight:500">${esc(sg.title || 'A song')}</b><div class="l">${esc(sg.artist || 'Spotify')}</div></div></div><a class="l" href="${esc(sg.url)}" target="_blank" rel="noopener">♫ open</a></div>${id ? `<iframe class="embed" style="margin-top:10px" src="https://open.spotify.com/embed/track/${id}?theme=0" loading="lazy" allow="encrypted-media"></iframe>` : ''}</div>`; }
 const BARS = Array.from({length:22},(_,i)=>`<i style="height:${30+((i*37)%60)}%"></i>`).join('');
-function voiceCard(v){ return `<div class="glass" style="padding:12px 14px"><div class="wave"><button class="play" data-act="play|${v.asset}"></button>${palOf(v.by)}<div class="bars">${BARS}</div><span class="l">${fmtDur(v.dur)}</span><button class="l" data-act="shareAsset|${v.asset}">↑</button></div></div>`; }
+function voiceCard(v){ return `<div class="glass" style="padding:12px 14px"><div class="wave"><button class="play" data-act="play|${v.asset}"></button>${palOf(v.by)}${v.name ? `<span class="aname">${esc(v.name)}</span>` : `<div class="bars">${BARS}</div>`}<span class="l">${fmtDur(v.dur)}</span><button class="l" data-act="shareAsset|${v.asset}">↑</button></div></div>`; }
 // one memory on the day page: voice notes, songs, the message with its costs, or a booking
 function dayBlock(m, t){
   if (m.kind === 'booking') { const tot = D.costTotal(m); return `<div class="caption">${palOf(m.flight ? (m.flight.who || m.authorId) : m.authorId)}<p>${m.flight ? `${esc(flightLabel(m))} <span class="l">${esc(m.flight.no||'')} · ${esc(m.flight.from||'')} → ${esc(m.flight.to||'')}</span>` : esc(m.text)}${tot ? ` <span class="l">${money2(tot)}</span>` : ''}</p><button class="l" style="margin-left:auto" data-act="${m.flight ? 'editFlight' : 'editMoment'}|${m.id}">edit</button></div>`; }
   const lines = D.costLines(m); const tot = D.costTotal(m);
   const costTxt = lines.length > 1 ? ` <span class="l">${lines.map(c => esc(c.label || D.catLabel(t, c.tag)) + ' ' + money2(c.amount)).join(' · ')}</span>` : tot ? ` <span class="l">${money2(tot)}</span>` : '';
-  const cap = m.text ? `<div class="caption">${palOf(m.authorId)}<p>${esc(m.text)}${costTxt}</p><button class="l" style="margin-left:auto" data-act="editMoment|${m.id}">edit</button></div>`
+  const where = m.place && (m.place.name || m.place.area) ? ` <span class="l">· 📍 ${esc(m.place.name || m.place.area)}</span>` : '';
+  const cap = m.text ? `<div class="caption">${palOf(m.authorId)}<p>${esc(m.text)}${where}${costTxt}</p><button class="l" style="margin-left:auto" data-act="editMoment|${m.id}">edit</button></div>`
     : `<div class="caption">${palOf(m.authorId)}<p class="l">${lines.length ? lines.map(c => (c.label ? esc(c.label) + ' ' : '') + money2(c.amount) + ' · ' + esc(D.catLabel(t, c.tag))).join(' · ') : ''}</p><button class="l" style="margin-left:auto" data-act="editMoment|${m.id}">edit</button></div>`;
   return D.voices(m).map(voiceCard).join('') + D.songs(m).map(sg => songCard(sg, m.authorId)).join('') + cap;
 }
@@ -521,14 +518,14 @@ ACT.play = async (id, el) => { if (audioEl && !audioEl.paused && audioEl.dataset
 ACT.shareAsset = async id => { const b = await Store.blob(id); if (!b) return; const f = new File([b], id, { type: b.type }); if (navigator.canShare && navigator.canShare({ files:[f] })) return navigator.share({ files:[f] }); download(b, id); };
 function download(blob, name){ const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); }
 let pendingSticker = null;
-ACT.addSticker = pal => { pendingSticker = pal; toast('Now tap a photo'); };
+ACT.addSticker = arg => { pendingSticker = stkFrom(arg); if (sheet) closeSheet(); toast('Now tap a photo'); };
 function setupStickerDrag(root){
   root.querySelectorAll('.pola').forEach(p => {
     p.addEventListener('pointerdown', async e => {
       if (e.target.classList.contains('stk')) return;
       if (!pendingSticker) return;
       const [mid, idx] = p.dataset.pola.split(','); const m = Store.get('moments', mid); const ph = m.photos[+idx]; const r = p.getBoundingClientRect();
-      (ph.stickers = ph.stickers || []).push({ pal: pendingSticker, x: Math.round(e.clientX - r.left - 22), y: Math.round(e.clientY - r.top - 22), rot: Math.round(Math.random()*30-15) });
+      (ph.stickers = ph.stickers || []).push(Object.assign({}, pendingSticker, { x: Math.round(e.clientX - r.left - 22), y: Math.round(e.clientY - r.top - 22), rot: Math.round(Math.random()*30-15) }));
       pendingSticker = null; await Store.put('moments', m); render();
     });
   });
@@ -557,7 +554,7 @@ function normalizeItems(m, keepCost){
 function momentSheet(m, editing, opts){
   opts = opts || {}; const present = opts.present; const me = D.me();
   m.authorId = m.authorId || me.id; m.photos = m.photos || []; normalizeItems(m, !!present);
-  let pendingPhotos = [], removedAssets = [], ddOpen = false, costEdit = null;
+  let pendingPhotos = [], removedAssets = [], ddOpen = false, costEdit = null, voicePick = false;
   let mode = m.tripId ? (D.trip(m.tripId) && D.trip(m.tripId).occasion ? 'occ' : 'trip') : 'none';
   if (!editing && !m.tripId && !present) { const t = D.tripForDate(m.date), o = D.occasionForDate(m.date); if (t) { mode = 'trip'; m.tripId = t.id; } else if (o) { mode = 'occ'; m.tripId = o.id; } }
   const costs = () => m.items.filter(x => x.type === 'cost');
@@ -566,7 +563,7 @@ function momentSheet(m, editing, opts){
   const who = present ? D.user(present.forUser) : null;
   const drawMain = () => { const t = theTrip(); const list = mode === 'occ' ? D.occasions() : D.trips();
     const thumbs = m.photos.map((p, i) => `<div class="th ${p.polaroid ? 'pol' : ''}"><img data-asset="${p.asset}" alt="">${x('mRmPhoto|e,' + i)}</div>`).join('') + pendingPhotos.map((p, i) => `<div class="th ${p.polaroid ? 'pol' : ''}"><img src="${p.url}" alt="">${x('mRmPhoto|p,' + i)}</div>`).join('');
-    const voices = m.items.filter(it => it.type === 'voice').map(v => `<div class="it"><button class="play" data-act="play|${v.asset}"></button>${palOf(v.by || m.authorId)}<span class="bars">${BARS}</span><span class="l">${fmtDur(v.dur)}</span>${x('mRmItem|' + v.id)}</div>`).join('');
+    const voices = m.items.filter(it => it.type === 'voice').map(v => `<div class="it"><button class="play" data-act="play|${v.asset}"></button>${palOf(v.by || m.authorId)}${v.name ? `<span class="aname">${esc(v.name)}</span>` : `<span class="bars">${BARS}</span>`}<span class="l">${fmtDur(v.dur)}</span>${x('mRmItem|' + v.id)}</div>`).join('');
     const songs = m.items.filter(it => it.type === 'song').map(sg => `<div class="it"><button class="songbtn" data-act="mEditSong|${sg.id}"><b>${esc(sg.title || 'A song')}</b><div class="l">${esc(sg.artist || (sg.url||'').replace(/^https?:\/\//,'').slice(0,34))}</div></button>${x('mRmItem|' + sg.id)}</div>`).join('');
     const cs = costs(); const tot = cs.reduce((s, c) => s + (+c.amount||0), 0);
     const costRows = cs.length ? `<div class="costs">${cs.map(c => `<button class="cr" data-act="mCostEdit|${c.id}">${c.label ? `<b>${esc(c.label)}</b>` : ''}<span class="tag">${esc(D.catLabel(t, c.tag || 'food'))}</span>${payerPals(c)}<span class="amt">${money2(c.amount)}</span></button>`).join('')}${cs.length > 1 ? `<div class="cr"><span class="l">Total</span><span class="amt">${money2(tot)}</span></div>` : ''}</div>` : '';
@@ -574,11 +571,12 @@ function momentSheet(m, editing, opts){
     return `<div class="bar"><button data-act="closeSheet">Close</button><span>${present ? esc(who.name) + '\'s birthday · ' + fmtD(m.date) : palOf(me.id) + ' ' + esc(me.name)}</span></div><h2 class="hd md" style="margin:0">${present ? (editing ? 'Your present' : 'Wrap a present') : editing ? 'Edit memory' : 'New memory'}</h2>
     ${present ? `<div class="row" style="justify-content:center;padding:6px 0 2px"><div class="gift"></div></div><textarea class="in" id="m-text" style="min-height:120px;font-size:15px" placeholder="Write them something">${esc(m.text||'')}</textarea>` : `<input class="in big" id="m-text" placeholder="Say it how you'd say it to them" value="${esc(m.text||'')}">`}
     ${seg}
-    <div class="attach"><button data-act="mPhoto|photo"><b>◫</b>Photo</button><button data-act="mPhoto|polaroid"><b>▣</b>Polaroid</button><button class="${rec?'sel':''}" data-act="mVoice"><b>●</b>${rec ? 'Stop' : voiceSaving ? 'Saving…' : 'Voice'}</button><button data-act="mSong"><b>♫</b>Song</button>${present ? '' : `<button data-act="mCost"><b>$</b>Cost</button>`}</div>
+    <div class="attach"><button data-act="mPhoto|photo"><b>◫</b>Photo</button><button data-act="mPhoto|polaroid"><b>▣</b>Polaroid</button><button class="${rec || voicePick ?'sel':''}" data-act="mVoice"><b>●</b>${rec ? 'Stop' : voiceSaving ? 'Saving…' : 'Voice'}</button><button data-act="mSong"><b>♫</b>Song</button>${present ? '' : `<button data-act="mCost"><b>$</b>Cost</button>`}</div>
+    ${voicePick && !rec ? `<div class="chips"><button class="chip on" data-act="mVoiceRec">● Record now</button><button class="chip" data-act="mVoiceFile">↑ Choose an audio file</button><button class="chip" data-act="mVoice">Cancel</button></div>` : ''}
     <div class="items">${thumbs ? `<div class="thumbs">${thumbs}</div>` : ''}${voices}${songs}${costRows}</div>
     ${present ? `<div class="list" style="font-size:13.5px"><div class="row"><span>Opens</span><span class="l">${fmtD(m.date)} · 12:00am ${esc(who.name)}'s time</span></div><div class="row"><span>Hidden from ${esc(who.name)}</span><span class="l">until then</span></div></div>` : ''}
     <div class="row" style="margin-top:auto">${present ? `<span class="l">Only you can see this</span>` : `<span style="display:flex;gap:8px;align-items:center"><input class="in" type="date" id="m-date" value="${m.date}" style="padding:8px 10px;font-size:12px;width:auto"></span>`}<span style="display:flex;gap:6px">${editing ? `<button class="btn sm lite" data-act="mDelete">Delete</button>` : ''}<button class="btn sm" data-act="mSave">${present ? (editing ? 'Save' : 'Wrap it') : 'Save'}</button></span></div>
-    <input type="file" id="m-file" accept="image/*" multiple hidden data-act="mFiles" data-on="change">`; };
+    <input type="file" id="m-file" accept="image/*" multiple hidden data-act="mFiles" data-on="change"><input type="file" id="m-audio" accept="audio/*,.m4a,.mp3,.wav,.aac" multiple hidden data-act="mAudioFiles" data-on="change">`; };
   const drawCost = () => { const c = costEdit; const t = theTrip(); const cats = D.cats(t); const tag = c.tag || 'food';
     return `<div class="bar"><button data-act="cBack">Back</button><span>Cost</span></div>
     <input class="in big" id="c-label" placeholder="What was it?" value="${esc(c.label||'')}">
@@ -615,7 +613,11 @@ function momentSheet(m, editing, opts){
   bindPaidBy('c', () => costEdit, () => { keepCost(); }, () => openSheet(draw(), null, 'tall'));
   // Voice: pick a format the phone can actually record (iPhone = mp4), collect data every second,
   // and keep a promise so Save waits for the recording to finish instead of saving without it.
-  ACT.mVoice = async () => { keep();
+  // Voice: record now, or pick a file (a Voice Memo saved to Files, a song clip…)
+  ACT.mVoice = () => { keep(); if (rec) { rec.stop(); return; } if (voiceSaving) return; voicePick = !voicePick; redraw(); };
+  ACT.mVoiceFile = () => { keep(); voicePick = false; $('#m-audio').click(); };
+  ACT.mAudioFiles = async (a, f) => { const files = Array.from(f.files || []); voicePick = false; for (const file of files) { try { const ext = ((file.name.split('.').pop() || '').toLowerCase().slice(0, 5)) || (file.type.includes('mpeg') ? 'mp3' : 'm4a'); const dur = await audioDuration(file); const asset = await Store.putBlob(file, ext); m.items.push({ id: uidShort(), type: 'voice', asset, dur, by: me.id, name: file.name.replace(/\.[^.]+$/, '').slice(0, 60) }); } catch (e) { toast('Could not add ' + file.name); } } if (files.length) toast(files.length === 1 ? 'Audio added' : files.length + ' audio files added'); if (sheet && !costEdit) redraw(); };
+  ACT.mVoiceRec = async () => { keep(); voicePick = false;
     if (rec) { rec.stop(); return; }
     if (voiceSaving) return;
     if (!window.MediaRecorder || !navigator.mediaDevices) return toast('This phone can\'t record here');
@@ -661,6 +663,7 @@ function bindPaidBy(p, get, keep, redraw){
   ACT[p + 'SplitMode'] = mode => { keep(); const c = get(); const [a, b] = D.users2(); const amt = +c.amount || 0; const sp = c.split || {}; if (mode === 'amt' && sp.mode !== 'amt') { const pa = sp[a.id] != null ? sp[a.id] : 50; c.split = { mode:'amt', [a.id]: Math.round(amt * pa) / 100, [b.id]: Math.round(amt * (100 - pa)) / 100 }; } else if (mode === 'pct' && sp.mode !== 'pct') { const va = sp[a.id] != null ? sp[a.id] : amt / 2; const pa = amt ? Math.round(va / amt * 100) : 50; c.split = { mode:'pct', [a.id]: pa, [b.id]: 100 - pa }; } redraw(); };
   ACT[p + 'SplitEdit'] = (uid, el) => { keep(); const c = get(); const [a, b] = D.users2(); const sp = c.split || (c.split = { mode:'pct' }); const other = uid === a.id ? b.id : a.id; const v = +el.value || 0; if (sp.mode === 'amt') sp[other] = Math.max(0, Math.round(((+c.amount || 0) - v) * 100) / 100); else sp[other] = Math.max(0, Math.min(100, 100 - v)); sp[uid] = v; redraw(); };
 }
+function audioDuration(file){ return new Promise(res => { try { const a = new Audio(); const u = URL.createObjectURL(file); const done = v => { URL.revokeObjectURL(u); res(isFinite(v) ? v : 0); }; a.preload = 'metadata'; a.onloadedmetadata = () => done(a.duration); a.onerror = () => done(0); setTimeout(() => done(a.duration || 0), 4000); a.src = u; } catch (e) { res(0); } }); }
 async function shrink(file){ try { const img = await createImageBitmap(file); const max = 1600, s = Math.min(1, max / Math.max(img.width, img.height)); const c = document.createElement('canvas'); c.width = Math.round(img.width * s); c.height = Math.round(img.height * s); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); return await new Promise(r => c.toBlob(r, 'image/jpeg', .86)); } catch (e) { return file; } }
 
 // ---------- flight sheet ----------
@@ -829,8 +832,8 @@ function renderCalendar(app){
     flights.filter(f => f.date === d).forEach(f => rows.push(`<button class="ev" data-act="editFlight|${f.id}"><span class="t">${esc(flightInfo(f).time || 'Flight')}</span>${palOf(f.flight.who || f.authorId)}<span style="font-weight:500">${esc(flightInfo(f).text)}</span><span class="r">${esc(f.flight.no||'')}</span></button>`));
     plans.filter(p => p.date === d).forEach(p => rows.push(`<button class="ev" data-go="day/${p.tripId || 'none'}_${p.date}"><span class="t">${esc(p.time||'All day')}</span>${p.who && p.who !== 'both' ? palOf(p.who) : `<span class="pair">${D.users2().map(u => `<i class="pal ${u.pal}"></i>`).join('')}</span>`}<span style="font-weight:500">${esc(p.title)}</span>${p.hidden ? '<span class="r">hidden</span>' : ''}</button>`));
     if (!calOurs) evs.filter(e => e.date === d).sort((a,b) => (a.time||'').localeCompare(b.time||'')).forEach(e => rows.push(`<button class="ev ${e.hidden?'hid':''}" data-act="evSheet|${e.id}"><span class="t">${esc(e.time||'All day')}</span>${palOf(e.ownerId)}<span>${esc(e.title)}</span>${e.hidden ? '<span class="r">hidden</span>' : ''}</button>`));
-    return divider + `<div class="agroup ${sel?'sel':''}" id="${sel?'ag-sel':''}"><div class="ahead"><span>${fmtDow(d)}${t ? ' · ' + esc(t.city) : ''}</span>${sel ? `<button class="l" data-act="addPlan|${d}${t?','+t.id:''}">+ Plan</button>` : ''}</div><div class="list">${rows.join('') || '<div class="empty" style="padding:6px 0;text-align:left">Nothing yet.</div>'}</div></div>`; });
-  app.innerHTML = `<div class="screen"><div class="bar"><span style="display:flex;gap:10px;align-items:center"><button data-act="calNav|-1">‹</button><span>${calMonth.y}</span><button data-act="calNav|1">›</button></span><span style="display:flex;gap:8px;align-items:center"><button class="chip ${calOurs?'on':''}" style="font-size:11px" data-act="calOurs">Our plans only</button><button class="l" data-act="importIcs">Import .ics</button></span></div>
+    return divider + `<div class="agroup ${sel?'sel':''}" id="${sel?'ag-sel':''}"><div class="ahead"><span>${fmtDow(d)}${t ? ' · ' + esc(t.city) : ''}</span>${sel ? `<button class="chip" style="font-size:11px" data-act="addPlan|${d}${t?','+t.id:''}">+ Plan</button>` : ''}</div><div class="list">${rows.join('') || '<div class="empty" style="padding:6px 0;text-align:left">Nothing yet.</div>'}</div></div>`; });
+  app.innerHTML = `<div class="screen"><div class="bar"><span style="display:flex;gap:10px;align-items:center"><button data-act="calNav|-1">‹</button><span>${calMonth.y}</span><button data-act="calNav|1">›</button></span><span style="display:flex;gap:8px;align-items:center"><button class="chip ${calOurs?'on':''}" style="font-size:11px" data-act="calOurs">Our plans only</button><button class="l" data-act="importIcs">Import .ics</button><button class="plus" data-act="calAdd" aria-label="Add">+</button></span></div>
     <h1 class="hd xl">${MON[calMonth.m]}</h1><div class="cal">${cells}</div>
     <div class="agenda">${groups.join('')}${moreLater ? '<button class="btn lite sm" style="align-self:center" data-act="calMore">Show more</button>' : ''}</div>
   </div>${nav('calendar')}`;
@@ -838,6 +841,10 @@ function renderCalendar(app){
 ACT.calNav = d => { calMonth.m += +d; if (calMonth.m < 0) { calMonth.m = 11; calMonth.y--; } if (calMonth.m > 11) { calMonth.m = 0; calMonth.y++; } const ym = `${calMonth.y}-${String(calMonth.m+1).padStart(2,'0')}`; calSel = today().startsWith(ym) ? today() : ym + '-01'; render(); };
 ACT.calSel = iso => { calSel = iso; render(); const g = $('#ag-sel'); if (g) g.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); };
 ACT.calOurs = () => { calOurs = !calOurs; render(); };
+// the + on the calendar: a plan for both of you, or something just yours
+ACT.calAdd = () => { const d = calSel || today(); openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>${fmtDow(d)} ${MON[parseDate(d).getMonth()]}</span></div><h2 class="hd md" style="margin:0">Add to the calendar</h2><div class="list" style="font-size:13.5px"><button class="row" data-act="calAddPlan|${d}"><span style="display:flex;gap:10px;align-items:center"><span class="pair">${D.users2().map(u => `<i class="pal ${u.pal}"></i>`).join('')}</span><span style="text-align:left"><div style="font-weight:500">A plan for us</div><div class="l">Shows for both of you</div></span></span><span class="l">›</span></button><button class="row" data-act="calAddMine|${d}"><span style="display:flex;gap:10px;align-items:center">${palOf(D.me().id)}<span style="text-align:left"><div style="font-weight:500">Just mine</div><div class="l">Dentist, work, things like that</div></span></span><span class="l">›</span></button></div>`); };
+ACT.calAddPlan = d => { closeSheet(); ACT.addPlan(d); };
+ACT.calAddMine = d => { closeSheet(); ACT.addEvent(d); };
 ACT.calMore = () => { calSpan += 180; render(); };
 ACT.addEvent = date => { const me = D.me(); openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>${palOf(me.id)} just mine</span></div><input class="in big" id="e-title" placeholder="Dentist, meeting, …"><div class="row"><input class="in" type="date" id="e-date" value="${date}" style="width:auto;padding:8px 10px;font-size:12px"><input class="in" type="time" id="e-time" style="width:auto;padding:8px 10px;font-size:12px"><button class="btn sm" style="margin-left:auto" data-act="eSave">Save</button></div><div class="row"><span style="font-size:13.5px">Hide from ${esc((D.other()||{}).name||'them')}</span><button class="tog off" id="e-hide" data-act="togToggle"></button></div>`); ACT.eSave = async () => { const title = $('#e-title').value.trim(); if (!title) return; await Store.put('events', { id: Store.uid(), ownerId: me.id, title, date: $('#e-date').value, time: $('#e-time').value, hidden: !$('#e-hide').classList.contains('off'), source:'manual' }); closeSheet(); render(); }; };
 ACT.togToggle = (a, el) => el.classList.toggle('off');
@@ -903,8 +910,6 @@ ACT.switchUser = () => { localStorage.removeItem('dj.me'); render(); };
 ACT.resetAll = async () => { if (await ask('Start over?', { sub: 'Erases everything on this phone. Anything synced stays in Supabase.', ok: 'Erase' })) { Store.wipe(); localStorage.removeItem('dj.me'); setupStep = 1; render(); } };
 ACT.signout = async () => { await Store.signOut(); render(); };
 ACT.signinSheet = () => openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Sync</span></div>${signinHTML('Sign in to sync')}`);
-ACT.exportAll = () => download(new Blob([Store.exportJSON()], { type:'application/json' }), 'des-jett-backup.json');
-ACT.importAll = () => { const f = document.createElement('input'); f.type = 'file'; f.accept = '.json'; f.onchange = async () => { await Store.importJSON(await f.files[0].text()); toast('Restored'); render(); }; f.click(); };
 function occSheet(o, editing){ const other = D.other() || { name: 'them' };
   openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>${editing ? 'Edit occasion' : 'New occasion'}</span></div>
     <input class="in big" id="o-name" placeholder="One year, Christmas…" value="${esc(o.city||'')}">
@@ -1068,6 +1073,7 @@ function renderMemories(app){
     ${anniMoments.length ? `<div class="l">${fmtD(anniDay)} · ${D.monthsSince(anniDay)} months</div><div class="feed" style="margin-top:-8px">${anniMoments.map(momentRow).join('')}</div>` : ''}
     ${ms.filter(m => !anniMoments.includes(m)).length ? `<div class="l">Moments</div><div class="feed" style="margin-top:-8px">${ms.filter(m => !anniMoments.includes(m)).sort((a,b) => b.date.localeCompare(a.date)).slice(0,4).map(momentRow).join('')}</div>` : future ? '<div class="empty">Nothing here yet.</div>' : ''}
     ${!future ? `<button class="row" style="font-size:13.5px" data-go="chat"><span>Chat</span><span class="l">${D.bubbles().filter(b => isoDate(new Date(b.at)).startsWith(ym)).length} said or thought ›</span></button>` : ''}
+    <div class="list" style="font-size:13.5px;margin-top:-6px"><button class="row" data-go="songs"><span>Our songs</span><span class="l">${allSongs().length} ›</span></button><button class="row" data-go="map"><span>Our map</span><span class="l">${D.trips().length} trip${D.trips().length === 1 ? '' : 's'} ›</span></button><button class="row" data-go="lists"><span>Things to do together</span><span class="l">${D.listItems().filter(i => !i.done).length} ›</span></button></div>
     ${!future ? `<div class="hr"></div><div class="l">All time</div><div class="stats" style="margin-top:-8px"><div><b>${all.trips}</b><span class="l">trip${all.trips===1?'':'s'}</span></div><div><b>${all.days}</b><span class="l">days</span></div><div><b>${all.moments}</b><span class="l">moments</span></div>${months != null ? `<div><b>${D.monthsSince(today())}</b><span class="l">months</span></div>` : ''}</div>` : ''}
   </div>${nav('memories')}`;
 }
@@ -1091,9 +1097,370 @@ function budgetCsv(t){ return budgetRows(t).map(r => r.map(v => `"${String(v).re
 function budgetWorkbook(t){ if (!window.XLSX) return null; const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(budgetRows(t)), t.city.slice(0,30)); return XLSX.write(wb, { bookType:'xlsx', type:'array' }); }
 ACT.exportXlsx = id => { const t = D.trip(id); const x = budgetWorkbook(t); if (x) download(new Blob([x]), `${t.city}-${t.start}-budget.xlsx`); else download(new Blob([budgetCsv(t)], { type:'text/csv' }), `${t.city}-${t.start}-budget.csv`); };
 
+// ---------- V2.9: unread + app badge ----------
+function seen(k){ const v = localStorage.getItem('dj.seen.' + k); if (v == null) { localStorage.setItem('dj.seen.' + k, String(Date.now())); return Date.now(); } return +v || 0; }
+function markSeen(k){ try { localStorage.setItem('dj.seen.' + k, String(Date.now())); } catch (e) {} }
+function unreadChat(){ const o = D.other(); if (!o) return 0; const s = seen('chat'); return D.bubbles().filter(b => b.userId === o.id && b.at > s).length; }
+function unreadMem(){ const o = D.other(); if (!o) return 0; const s = seen('home'); return D.moments().filter(m => m.authorId === o.id && m.kind === 'moment' && (m.addedAt || m.createdAt || 0) > s).length; }
+let badgeLast = -1;
+function updateBadge(){ if (!D.me()) return; const n = unreadChat() + unreadMem(); if (n === badgeLast) return; badgeLast = n;
+  try { if (navigator.setAppBadge) { if (n) navigator.setAppBadge(n).catch(() => {}); else navigator.clearAppBadge().catch(() => {}); } } catch (e) {}
+  try { if (window.caches) caches.open('dj-badge').then(c => c.put('count', new Response(String(n)))).catch(() => {}); } catch (e) {} }
+
+// ---------- V2.9: stickers (the two pals + your own) ----------
+D.stickers = () => Store.all('stickers').sort((a, b) => a.at - b.at);
+function stkKey(s){ return s.asset ? 's:' + s.asset : 'pal:' + s.pal; }
+function stkFrom(arg){ if (!arg) return null; if (arg.startsWith('s:')) return { asset: arg.slice(2) }; if (arg.startsWith('pal:')) return { pal: arg.slice(4) }; return { pal: arg }; }
+function stkHTML(s, cls, extra){ return s.asset ? `<i class="${cls} c" data-asset="${s.asset}" ${extra||''}></i>` : `<i class="${cls} ${s.pal}" ${extra||''}></i>`; }
+// one tray, used on photos and in chat; hold one of yours to remove it
+function stickerTray(act){ return `<div class="tray">${['bunny','puppy'].map(p => `<button data-act="${act}|pal:${p}"><i class="pal ${p}"></i></button>`).join('')}${D.stickers().map(s => `<button data-act="${act}|s:${s.asset}" data-hold="${s.id}"><i class="tstk" data-asset="${s.asset}"></i></button>`).join('')}<button class="add" data-act="stkAdd" aria-label="Add a sticker">+</button></div>`; }
+function bindHold(root){ root.querySelectorAll('[data-hold]').forEach(el => { let t = null; const clear = () => { clearTimeout(t); t = null; };
+  el.addEventListener('pointerdown', () => { clear(); t = setTimeout(async () => { t = null; el._busy = true; setTimeout(() => { el._busy = false; }, 600); const s = Store.get('stickers', el.dataset.hold); if (s && await ask('Remove this sticker?', { sub: 'Stickers already on photos and in chat stay.', ok: 'Remove' })) { const tray = sheet && sheet.sh.dataset.tray; await Store.remove(s.id); if (tray === 'chatSendStk') ACT.chatStk(); else if (tray === 'addSticker') ACT.stkTray(); render(); } }, 550); });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => el.addEventListener(ev, clear)); el.addEventListener('contextmenu', e => e.preventDefault()); }); }
+// keep the cut-out: shrink to a small PNG, transparency and all
+async function stickerBlob(blob){ try { const img = await createImageBitmap(blob); const max = 360, s = Math.min(1, max / Math.max(img.width, img.height)); const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(img.width * s)); c.height = Math.max(1, Math.round(img.height * s)); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); return await new Promise(r => c.toBlob(r, 'image/png')); } catch (e) { return blob; } }
+async function saveSticker(blob){ const png = await stickerBlob(blob); const asset = await Store.putBlob(png, 'png'); await Store.put('stickers', { id: Store.uid(), asset, by: D.me().id, at: Date.now() }); return asset; }
+let stkReturn = null;   // what to reopen after adding one
+ACT.stkAdd = () => { const back = sheet && sheet.sh.dataset.tray ? sheet.sh.dataset.tray : null; stkReturn = back;
+  openSheet(`<div class="bar"><button data-act="${back ? 'stkBack' : 'closeSheet'}">${back ? 'Back' : 'Close'}</button><span>New sticker</span></div><h2 class="hd md" style="margin:0">Add a sticker</h2>
+    <div class="glass deep" style="font-size:13px"><div style="font-weight:500">Cut-out from a photo</div><ol class="steps"><li>In Photos, press and hold the person or thing until it lifts out.</li><li>Tap <b>Copy</b>.</li><li>Come back here and tap <b>Paste</b>.</li></ol></div>
+    <div class="list" style="font-size:13.5px"><button class="row" data-act="stkPaste"><span>Paste</span><span class="l">from what you copied ›</span></button><button class="row" data-act="stkPick"><span>Choose a picture</span><span class="l">any image ›</span></button></div>
+    <div class="l">Stickers are shared — you both get them. Hold one in the tray to remove it.</div>
+    <input type="file" id="stk-file" accept="image/*" hidden data-act="stkFile" data-on="change">`); };
+ACT.stkBack = () => { const t = stkReturn; stkReturn = null; if (t === 'chatSendStk') ACT.chatStk(); else if (t === 'addSticker') ACT.stkTray(); else closeSheet(); };
+ACT.stkPick = () => $('#stk-file').click();
+ACT.stkFile = async (a, el) => { const f = el.files && el.files[0]; if (!f) return; await saveSticker(f); toast('Sticker added'); ACT.stkBack(); };
+ACT.stkPaste = async () => { if (!navigator.clipboard || !navigator.clipboard.read) return toast('Paste isn\'t available here — use Choose a picture');
+  try { const items = await navigator.clipboard.read(); for (const it of items) { const type = it.types.find(t => t.startsWith('image/')); if (type) { await saveSticker(await it.getType(type)); toast('Sticker added'); return ACT.stkBack(); } } toast('Nothing to paste — copy a cut-out first'); }
+  catch (e) { toast('Couldn\'t paste — copy a cut-out first'); } };
+// on the day page: pick one, then tap a photo
+ACT.stkTray = () => { openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Stickers</span></div><h2 class="hd md" style="margin:0">Pick a sticker</h2>${stickerTray('addSticker')}<div class="l">Then tap a photo to stick it on. Drag to move, tap it to remove.</div>`, sh => { sh.dataset.tray = 'addSticker'; bindHold(sh); }); };
+
+// ---------- V2.9: chat with a composer ----------
+let chatDraft = '', chatThink = false;
+function chatMsgBody(b){
+  if (b.sticker) return stkHTML(b.sticker, 'cstk');
+  if (b.photo) return `<button class="cph" data-act="chatPhoto|${b.id}"><img data-asset="${b.photo}" alt=""></button>${b.text && !b.auto ? `<div class="b">${esc(b.text)}</div>` : ''}`;
+  return `<div class="b ${b.kind === 'think' ? 'think' : ''}">${esc(b.text)}</div>`;
+}
+function renderChat(app){
+  const me = D.me(); const all = D.bubbles().slice().sort((a,b) => a.at - b.at); let lastDay = '';
+  const hadFocus = document.activeElement && document.activeElement.id === 'chat-in'; markSeen('chat');
+  const rows = all.map(b => { const d = new Date(b.at); const day = isoDate(d); const sep = day !== lastDay ? `<div class="daysep">${day === today() ? 'Today' : fmtD(day)}</div>` : ''; lastDay = day; const u = D.user(b.userId) || {}; const mode = skyMode(u, d); return sep + `<div class="msg ${b.userId === me.id ? 'me' : ''} ${b.sticker ? 'sticker' : ''}"><i class="pal ${u.pal||'bunny'}"></i><div>${chatMsgBody(b)}<div class="t">${timeIn(u, d)} ${wx(mode === 'night' ? 'moon' : 'sun')}</div></div></div>`; }).join('');
+  const month = all.filter(b => isoDate(new Date(b.at)).slice(0,7) === today().slice(0,7)).length;
+  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="home">‹ Home</button><span>Chat</span></div><div class="row"><span class="hd" style="font-size:32px">${D.users2().map(u => `<i class="pal ${u.pal}" style="width:28px;height:28px;vertical-align:-6px"></i>`).join('')}</span><span class="l">${month} this month</span></div><div class="chat">${rows || '<div class="empty">Nothing said yet. Say something below.</div>'}</div>
+    <div class="composer"><button class="cbtn" data-act="chatPick" aria-label="Photo">◫</button><button class="cbtn" data-act="chatStk" aria-label="Sticker">☺</button><input class="in" id="chat-in" placeholder="${chatThink ? 'what are you thinking?' : 'say something'}" value="${esc(chatDraft)}" data-act="chatType" data-on="input" autocomplete="off" enterkeyhint="send"><button class="cbtn ${chatThink ? 'on' : ''}" data-act="chatThink" aria-label="Think">💭</button><button class="btn sm" data-act="chatSend">Send</button></div>
+    <input type="file" id="chat-file" accept="image/*" multiple hidden data-act="chatFiles" data-on="change">
+  </div>${nav('home')}`;
+  const inp = $('#chat-in'); inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); ACT.chatSend(); } }; if (hadFocus) inp.focus();
+  setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 0);
+}
+ACT.chatType = (a, el) => { chatDraft = el.value; };
+ACT.chatThink = () => { chatThink = !chatThink; render(); const i = $('#chat-in'); if (i) i.focus(); };
+ACT.chatSend = async () => { const el = $('#chat-in'); const text = (el ? el.value : chatDraft).trim(); if (!text) return; chatDraft = ''; await Store.put('bubbles', { id: Store.uid(), userId: D.me().id, kind: chatThink ? 'think' : 'say', text, at: Date.now() }); chatThink = false; render(); const i = $('#chat-in'); if (i) i.focus(); };
+ACT.chatPick = () => $('#chat-file').click();
+ACT.chatFiles = async (a, el) => { const files = Array.from(el.files || []); if (!files.length) return; const text = chatDraft.trim(); chatDraft = ''; toast(files.length === 1 ? 'Sending…' : 'Sending ' + files.length + ' photos…');
+  for (const [i, f] of files.entries()) { const blob = await shrink(f); const asset = await Store.putBlob(blob, 'jpg'); await Store.put('bubbles', { id: Store.uid(), userId: D.me().id, kind: 'say', photo: asset, text: i === 0 && text ? text : '📷 Photo', auto: !(i === 0 && text), at: Date.now() + i }); }
+  render(); };
+ACT.chatStk = () => openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Send a sticker</span></div>${stickerTray('chatSendStk')}<div class="l">Hold one of yours to remove it.</div>`, sh => { sh.dataset.tray = 'chatSendStk'; bindHold(sh); });
+ACT.chatSendStk = async arg => { const s = stkFrom(arg); closeSheet(); await Store.put('bubbles', { id: Store.uid(), userId: D.me().id, kind: 'say', sticker: s, text: 'sent a sticker', auto: true, at: Date.now() }); render(); };
+ACT.chatPhoto = id => { const b = Store.get('bubbles', id); if (!b) return; const mine = b.userId === D.me().id; const u = D.user(b.userId) || {};
+  openSheet(`<div class="vtop"><button data-act="closeSheet">‹ Chat</button><span>${esc(u.name||'')} · ${fmtD(isoDate(new Date(b.at)))}</span></div><div class="vimg fit"><img data-asset="${b.photo}" alt=""></div><div class="vbody">${b.text && !b.auto ? `<div style="font-size:14px">${esc(b.text)}</div>` : ''}<div class="vact"><button data-act="shareAsset|${b.photo}">Save to phone</button>${mine ? `<button data-act="chatDelPhoto|${b.id}">Delete</button>` : ''}</div></div>`, null, 'viewer'); };
+ACT.chatDelPhoto = async id => { if (!await ask('Delete this photo?', { sub: 'It\'s removed from the chat for both of you.', ok: 'Delete' })) return; const b = Store.get('bubbles', id); if (b && b.photo) Store.removeBlob(b.photo); await Store.remove(id); closeSheet(); render(); };
+
+// ---------- V2.9: things to do together (lists) ----------
+const DEFAULT_LISTS = [{ key: 'cook', label: 'To cook', icon: '🍳' }, { key: 'do', label: 'To do', icon: '✅' }, { key: 'places', label: 'Places to go', icon: '📍' }, { key: 'watch', label: 'To watch', icon: '🎬' }];
+D.lists = () => { const s = D.settings(); return Array.isArray(s.lists) && s.lists.length ? s.lists : DEFAULT_LISTS; };
+D.listItems = () => Store.all('listitems').sort((a, b) => a.at - b.at);
+const cityKey = c => (c || '').toLowerCase().split(/[ ,]/)[0];
+function renderLists(app){
+  const items = D.listItems();
+  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="home">‹ Home</button><span>${items.filter(i => !i.done).length} on the list</span></div><h1 class="hd">Things to do together</h1>
+    <div class="lcards">${D.lists().map(l => { const its = items.filter(i => i.list === l.key); const open = its.filter(i => !i.done); return `<button class="glass tap lcard" data-go="list/${l.key}"><span class="ic">${esc(l.icon || '✦')}</span><b>${esc(l.label)}</b><span class="l">${open.length ? open.length + ' to go' : its.length ? 'all done ✓' : 'empty'}</span>${open.slice(0, 2).map(i => `<span class="pv">${esc(i.text)}</span>`).join('')}</button>`; }).join('')}<button class="glass tap lcard add" data-act="listNew"><span class="ic">+</span><b>New list</b><span class="l">date ideas, gifts…</span></button></div>
+    ${(() => { const done = items.filter(i => i.done).sort((a, b) => (b.doneAt||0) - (a.doneAt||0)).slice(0, 5); return done.length ? `<div class="l">Recently done</div><div class="list" style="margin-top:-8px">${done.map(i => `<button class="row" data-go="list/${i.list}"><span style="text-decoration:line-through;color:var(--mu)">${esc(i.text)}</span><span class="l">${i.doneBy ? palOf(i.doneBy) : ''} ${i.doneAt ? fmtD(isoDate(new Date(i.doneAt))) : ''}</span></button>`).join('')}</div>` : ''; })()}
+  </div>${nav('home')}`;
+}
+ACT.listNew = async () => { const name = await ask('Name the list', { input: '', placeholder: 'Date ideas, gifts…', ok: 'Add' }); if (!name) return; const key = 'l_' + Store.uid().slice(0, 8); await D.saveSettings({ lists: D.lists().concat([{ key, label: name, icon: '✦' }]) }); go('list', { id: key }); };
+let listShowDone = false;
+function renderList(app){
+  const key = route.id || ''; const byCity = key.startsWith('city~') ? decodeURIComponent(key.slice(5)) : '';
+  const l = byCity ? { key, label: 'For ' + byCity, icon: '📍' } : D.lists().find(x => x.key === key); if (!l) return go('lists');
+  const all = D.listItems().filter(i => byCity ? cityKey(i.city) === cityKey(byCity) : i.list === key); const open = all.filter(i => !i.done), done = all.filter(i => i.done).sort((a, b) => (b.doneAt||0) - (a.doneAt||0));
+  const row = i => `<div class="li ${i.done ? 'done' : ''}"><button class="tick" data-act="liTick|${i.id}" aria-label="Done">${i.done ? '✓' : ''}</button><button class="lt" data-act="liEdit|${i.id}"><span>${esc(i.text)}</span><span class="l">${palOf(i.by)}${i.city ? ' · ' + esc(i.city) : ''}${i.note ? ' · ' + esc(i.note.slice(0, 40)) : ''}${byCity ? ' · ' + esc((D.lists().find(x => x.key === i.list) || {}).label || '') : ''}${i.link ? ' · link' : ''}</span></button></div>`;
+  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="lists">‹ Lists</button><span>${open.length} to go</span></div><h1 class="hd">${esc(l.icon || '')} ${esc(l.label)}</h1>
+    ${byCity ? '' : `<div class="row" style="gap:8px"><input class="in" id="li-new" placeholder="Add something…" autocomplete="off" enterkeyhint="done"><button class="btn sm" data-act="liAdd|${key}">Add</button></div>`}
+    <div class="lis">${open.map(row).join('') || `<div class="empty">${byCity ? 'Nothing tagged with ' + esc(byCity) + ' yet.' : 'Nothing yet — add the first one.'}</div>`}</div>
+    ${done.length ? `<button class="row l" data-act="liShowDone"><span>${done.length} done</span><span>${listShowDone ? 'hide ▴' : 'show ▾'}</span></button>${listShowDone ? `<div class="lis">${done.map(row).join('')}</div>` : ''}` : ''}
+    ${byCity || DEFAULT_LISTS.some(x => x.key === key) ? '' : `<div class="list mt-auto" style="font-size:13.5px"><button class="row" data-act="listRename|${key}"><span>Rename this list</span><span class="l">›</span></button><button class="row" data-act="listRemove|${key}"><span class="muted">Remove this list</span><span class="l">›</span></button></div>`}
+  </div>${nav('home')}`;
+  const inp = $('#li-new'); if (inp) inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); ACT.liAdd(key); } };
+}
+ACT.liAdd = async key => { const el = $('#li-new'); const text = el.value.trim(); if (!text) return; await Store.put('listitems', { id: Store.uid(), list: key, text, by: D.me().id, at: Date.now(), done: false }); render(); const i = $('#li-new'); if (i) i.focus(); };
+ACT.liShowDone = () => { listShowDone = !listShowDone; render(); };
+ACT.liTick = async id => { const i = Store.get('listitems', id); if (!i) return;
+  if (i.done) { Object.assign(i, { done: false, doneAt: null, doneBy: null }); await Store.put('listitems', i); return render(); }
+  Object.assign(i, { done: true, doneAt: Date.now(), doneBy: D.me().id }); await Store.put('listitems', i); render();
+  if (await ask('Done! Make it a memory?', { sub: i.text, ok: 'Make a memory', no: 'Not now' })) momentSheet({ text: i.text, date: today() }); };
+ACT.liEdit = id => { const i = Store.get('listitems', id); if (!i) return; const cities = [...new Set(D.users().map(u => u.city).concat(D.trips().map(t => t.city)).filter(Boolean))];
+  openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>${palOf(i.by)} added ${fmtD(isoDate(new Date(i.at)))}</span></div><input class="in big" id="li-text" value="${esc(i.text)}">
+    <textarea class="in" id="li-note" placeholder="Notes, a recipe, why…">${esc(i.note||'')}</textarea><input class="in" id="li-link" placeholder="Link (optional)" value="${esc(i.link||'')}">
+    <div class="row"><span style="font-size:13.5px">Where</span><select class="in" id="li-city" style="width:auto;padding:6px 10px;font-size:12px"><option value="">Anywhere</option>${cities.map(c => `<option ${cityKey(i.city) === cityKey(c) ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></div>
+    <div class="row"><span style="font-size:13.5px">List</span><select class="in" id="li-list" style="width:auto;padding:6px 10px;font-size:12px">${D.lists().map(l => `<option value="${l.key}" ${l.key === i.list ? 'selected' : ''}>${esc(l.label)}</option>`).join('')}</select></div>
+    ${i.link ? `<a class="row l" href="${esc(i.link)}" target="_blank" rel="noopener"><span>Open the link</span><span>›</span></a>` : ''}
+    <div class="row" style="margin-top:auto"><button class="btn sm lite" data-act="liDelete|${i.id}">Delete</button><button class="btn sm" data-act="liSave|${i.id}">Save</button></div>`); };
+ACT.liSave = async id => { const i = Store.get('listitems', id); const text = $('#li-text').value.trim(); if (!text) return toast('Give it a name'); Object.assign(i, { text, note: $('#li-note').value.trim(), link: $('#li-link').value.trim(), city: $('#li-city').value, list: $('#li-list').value }); await Store.put('listitems', i); closeSheet(); render(); };
+ACT.liDelete = async id => { if (!await ask('Delete this?', { ok: 'Delete' })) return; await Store.remove(id); closeSheet(); render(); };
+ACT.listRename = async key => { const ls = D.lists().map(x => Object.assign({}, x)); const l = ls.find(x => x.key === key); const name = await ask('Rename', { input: l.label, ok: 'Save' }); if (!name) return; l.label = name; await D.saveSettings({ lists: ls }); render(); };
+ACT.listRemove = async key => { const its = D.listItems().filter(i => i.list === key); if (!await ask('Remove this list?', { sub: its.length ? 'Its ' + its.length + ' item' + (its.length === 1 ? '' : 's') + ' are deleted too.' : '', ok: 'Remove' })) return; await Store.removeMany(its.map(i => i.id)); await D.saveSettings({ lists: D.lists().filter(x => x.key !== key) }); go('lists'); };
+
+// ---------- V2.9: our songs ----------
+function allSongs(){ return D.moments().filter(m => m.kind !== 'plan').flatMap(m => D.songs(m).map(sg => ({ sg, m }))).sort((a, b) => (b.m.date + String(b.m.createdAt||0).padStart(15,'0')).localeCompare(a.m.date + String(a.m.createdAt||0).padStart(15,'0'))); }
+function renderSongs(app){
+  const ss = allSongs(); const first = ss[0];
+  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="memories">‹ Memories</button><span>${ss.length} song${ss.length === 1 ? '' : 's'}</span></div><h1 class="hd">Our songs</h1>
+    ${first ? songCard(first.sg, first.m.authorId) : ''}
+    <div class="list">${ss.map(({ sg, m }) => `<div class="row"><button style="flex:1;text-align:left;display:flex;gap:10px;align-items:center" data-go="day/${m.tripId || 'none'}_${m.date}">${palOf(m.authorId)}<span><div style="font-weight:500">${esc(sg.title || 'A song')}</div><div class="l">${esc(sg.artist || 'Spotify')} · ${fmtD(m.date)} ${m.date.slice(0,4)}${m.tripId && D.trip(m.tripId) ? ' · ' + esc(D.trip(m.tripId).city) : ''}${m.text ? ' · ' + esc(m.text.slice(0, 30)) : ''}</div></span></button><a class="l" href="${esc(sg.url)}" target="_blank" rel="noopener">♫ open</a></div>`).join('') || '<div class="empty">Songs you add to memories collect here.</div>'}</div>
+    <button class="btn lite block" data-act="songAdd">+ Add a song</button>
+  </div>${nav('memories')}`;
+}
+ACT.songAdd = async () => { const url = await ask('Paste a Spotify link', { input: '', placeholder: 'https://open.spotify.com/track/…', ok: 'Next' }); if (!url) return; const title = (await ask('Song title', { sub: 'optional', input: '', ok: 'Next' })) || ''; const artist = (await ask('Artist', { sub: 'optional', input: '', ok: 'Next' })) || ''; const note = await ask('Why this one?', { sub: 'optional — becomes the memory', input: '', ok: 'Save' }); if (note == null) return;
+  const t = D.tripForDate(today()); await Store.put('moments', { id: Store.uid(), tripId: t ? t.id : '', date: today(), authorId: D.me().id, kind: 'moment', text: note, items: [{ id: uidShort(), type: 'song', url, title, artist }], photos: [], createdAt: Date.now(), addedAt: Date.now() }); toast('Added'); render(); };
+
+// ---------- V2.9: on this day ----------
+function onThisDay(){ const td = today(); const ms = D.moments().filter(m => m.kind === 'moment' && m.date < td);
+  const years = ms.filter(m => m.date.slice(5) === td.slice(5)); const pool = years.length ? years : ms.filter(m => m.date.slice(8) === td.slice(8));
+  if (!pool.length) return null; const withPh = pool.filter(m => (m.photos||[]).length); const pick = (withPh.length ? withPh : pool).sort((a, b) => a.date.localeCompare(b.date))[0];
+  const sameDay = pool.filter(m => m.date === pick.date); const yrs = +td.slice(0,4) - +pick.date.slice(0,4); const mos = yrs * 12 + (+td.slice(5,7) - +pick.date.slice(5,7));
+  return { m: pick, all: sameDay, label: years.length ? (yrs === 1 ? 'A year ago today' : yrs + ' years ago today') : (mos === 1 ? 'A month ago today' : mos + ' months ago today') }; }
+function onThisDayHTML(){ const o = onThisDay(); if (!o) return ''; const m = o.m; const t = m.tripId && D.trip(m.tripId); const phs = o.all.flatMap(x => (x.photos||[]).map(p => p.asset)).slice(0, 3);
+  return `<button class="glass tap otd" data-go="day/${m.tripId || 'none'}_${m.date}"><div class="row"><span class="l">On this day · ${esc(o.label)}</span><span class="l">${fmtD(m.date)}${t ? ' · ' + esc(t.city) : ''}</span></div>${phs.length ? `<div class="otdph">${phs.map(a => `<i data-asset="${a}"></i>`).join('')}</div>` : ''}<div style="font-size:14px;font-weight:500;margin-top:8px;text-align:left">${esc(m.text || m.title || (D.songs(m)[0] || {}).title || (phs.length ? 'Photos' : 'A memory'))}</div></button>`; }
+
+// ---------- V2.9: map ----------
+const geoCache = {};
+async function geocode(q){ if (!q) return null; const k = q.toLowerCase(); if (geoCache[k] !== undefined) return geoCache[k]; const known = Object.keys(CITIES).find(c => c.toLowerCase() === k.split(',')[0].trim()); if (known) return geoCache[k] = { lat: CITIES[known].lat, lon: CITIES[known].lon };
+  try { const r = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(q)); const j = await r.json(); geoCache[k] = j && j[0] ? { lat: +j[0].lat, lon: +j[0].lon } : null; } catch (e) { geoCache[k] = null; } return geoCache[k]; }
+async function reverseGeo(lat, lon){ try { const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&zoom=17&lat=${lat}&lon=${lon}`); const j = await r.json(); const a = j.address || {}; const spot = j.name || a.amenity || a.tourism || a.leisure || a.shop || ''; const area = a.neighbourhood || a.suburb || a.quarter || a.city_district || a.town || a.city || a.village || ''; return { name: spot && spot !== area ? spot : area, area, city: a.city || a.town || a.village || '' }; } catch (e) { return null; } }
+async function loadLeaflet(){ if (window.L) return; if (!document.querySelector('link[data-leaflet]')) { const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css'; l.dataset.leaflet = 1; document.head.appendChild(l); } await loadScript('https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js'); }
+function mapPoints(){ const pts = [];
+  D.users().forEach(u => { const g = u.lat != null ? { lat: u.lat, lon: u.lon } : CITIES[u.city]; if (g) pts.push({ kind: 'home', lat: g.lat, lon: g.lon, title: esc(u.name) + '\'s home · ' + esc(u.city), pal: u.pal }); });
+  D.trips().forEach(t => { const g = t.geo || (CITIES[t.city] ? CITIES[t.city] : null); if (g) pts.push({ kind: 'trip', lat: g.lat, lon: g.lon, title: `<a href="#trip/${t.id}">${esc(t.city)}</a><br>${fmtD(t.start)} – ${fmtD(t.end)} ${t.start.slice(0,4)}` }); });
+  D.moments().filter(m => m.place && m.place.lat != null).forEach(m => pts.push({ kind: 'mem', lat: m.place.lat, lon: m.place.lon, title: `<a href="#day/${m.tripId || 'none'}_${m.date}">${esc(m.text || m.place.name || 'A memory')}</a><br>${fmtD(m.date)}${m.place.name ? ' · ' + esc(m.place.name) : ''}` }));
+  return pts; }
+let mapObj = null;
+function renderMap(app){
+  const trips = D.trips(); const places = D.moments().filter(m => m.place && m.place.name);
+  const byPlace = {}; places.forEach(m => { const k = m.place.name; (byPlace[k] = byPlace[k] || []).push(m); });
+  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="memories">‹ Memories</button><span>${trips.length} trip${trips.length === 1 ? '' : 's'} · ${places.length} place${places.length === 1 ? '' : 's'}</span></div><h1 class="hd">Our map</h1>
+    <div id="map" class="map"><div class="empty">Loading the map…</div></div>
+    <div class="l">Places from photos</div><div class="list" style="margin-top:-8px">${Object.keys(byPlace).map(k => { const m = byPlace[k][0]; return `<button class="row" data-go="day/${m.tripId || 'none'}_${m.date}"><span>${esc(k)}</span><span class="l">${byPlace[k].length > 1 ? byPlace[k].length + ' memories' : fmtD(m.date)} ›</span></button>`; }).join('') || '<div class="empty" style="text-align:left;padding:6px 0">Photos imported with their location add pins here.</div>'}</div>
+  </div>${nav('memories')}`;
+  drawMap();
+}
+async function drawMap(){
+  // trips in cities the app doesn't know yet get looked up once and remembered
+  for (const t of D.trips().filter(t => !t.geo && !CITIES[t.city])) { const g = await geocode(t.city); if (g) { t.geo = g; await Store.put('trips', t); } }
+  const el = $('#map'); if (!el || route.name !== 'map') return;
+  try { await loadLeaflet(); } catch (e) { el.innerHTML = '<div class="empty">The map needs a connection.</div>'; return; }
+  if (!$('#map')) return; el.innerHTML = ''; const pts = mapPoints(); if (mapObj) { try { mapObj.remove(); } catch (e) {} }
+  const L = window.L; mapObj = L.map(el, { zoomControl: false, attributionControl: true }); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '© OpenStreetMap' }).addTo(mapObj);
+  const icon = p => L.divIcon({ className: '', html: p.kind === 'home' ? `<i class="pal ${p.pal} mpin"></i>` : p.kind === 'trip' ? '<i class="mtrip"></i>' : '<i class="mmem"></i>', iconSize: p.kind === 'home' ? [26, 26] : p.kind === 'trip' ? [18, 18] : [10, 10] });
+  pts.forEach(p => L.marker([p.lat, p.lon], { icon: icon(p) }).addTo(mapObj).bindPopup(p.title));
+  if (pts.length) mapObj.fitBounds(L.latLngBounds(pts.map(p => [p.lat, p.lon])).pad(0.3), { maxZoom: 12 }); else mapObj.setView([49.28, -100], 3);
+}
+
+// ---------- V2.9: import a pile of photos → sorted into days → memories ----------
+// Reads each photo's own "taken at" time (and location, if the phone kept it) from its EXIF,
+// groups them by day and by gaps, guesses names from your plans and places, then you review.
+function readExif(buf){
+  try {
+    const u8 = new Uint8Array(buf), v = new DataView(buf); let start = -1;
+    for (let i = 0; i < u8.length - 12; i++) { if (u8[i] === 0x45 && u8[i+1] === 0x78 && u8[i+2] === 0x69 && u8[i+3] === 0x66 && u8[i+4] === 0 && u8[i+5] === 0) { const t = i + 6; if ((u8[t] === 0x49 && u8[t+1] === 0x49) || (u8[t] === 0x4D && u8[t+1] === 0x4D)) { start = t; break; } } }
+    if (start < 0) return null;
+    const le = u8[start] === 0x49, N = u8.length - start;
+    const g16 = o => o + 2 <= N ? v.getUint16(start + o, le) : 0, g32 = o => o + 4 <= N ? v.getUint32(start + o, le) : 0;
+    const out = {};
+    const ifd = (off, cb) => { if (!off || off + 2 > N) return; const n = Math.min(g16(off), 300); for (let i = 0; i < n; i++) { const e = off + 2 + i * 12; if (e + 12 > N) break; cb(g16(e), g16(e + 2), g32(e + 4), e + 8); } };
+    const str = (cnt, vo) => { const o = cnt > 4 ? g32(vo) : vo; let s = ''; for (let i = 0; i < cnt && o + i < N; i++) { const c = u8[start + o + i]; if (!c) break; s += String.fromCharCode(c); } return s.trim(); };
+    const rat = o => { const d = g32(o + 4); return d ? g32(o) / d : 0; };
+    const dms = vo => { const o = g32(vo); return rat(o) + rat(o + 8) / 60 + rat(o + 16) / 3600; };
+    let exifP = 0, gpsP = 0;
+    ifd(g32(4), (tag, type, cnt, vo) => { if (tag === 0x8769) exifP = g32(vo); else if (tag === 0x8825) gpsP = g32(vo); else if (tag === 0x010F) out.make = str(cnt, vo); else if (tag === 0x0110) out.model = str(cnt, vo); else if (tag === 0x0132) out.date0 = str(cnt, vo); });
+    ifd(exifP, (tag, type, cnt, vo) => { if (tag === 0x9003) out.date = str(cnt, vo); else if (tag === 0x9004 && !out.date) out.date = str(cnt, vo); });
+    let latRef = 'N', lonRef = 'E', lat = null, lon = null;
+    ifd(gpsP, (tag, type, cnt, vo) => { if (tag === 1) latRef = String.fromCharCode(u8[start + vo]); else if (tag === 3) lonRef = String.fromCharCode(u8[start + vo]); else if (tag === 2 && cnt === 3) lat = dms(vo); else if (tag === 4 && cnt === 3) lon = dms(vo); });
+    if (lat != null && lon != null && (lat || lon)) { out.lat = latRef === 'S' ? -lat : lat; out.lon = lonRef === 'W' ? -lon : lon; }
+    const d = (out.date || out.date0 || '').match(/^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2})/); if (d && d[1] !== '0000') out.dt = `${d[1]}-${d[2]}-${d[3]}T${d[4]}:${d[5]}`;
+    return out;
+  } catch (e) { return null; }
+}
+const imgTime = dt => { const h = +dt.slice(11, 13), m = dt.slice(14, 16); return ((h % 12) || 12) + ':' + m + (h < 12 ? 'am' : 'pm'); };
+const dtMin = dt => +dt.slice(11, 13) * 60 + +dt.slice(14, 16);
+const dtMs = dt => new Date(+dt.slice(0, 4), +dt.slice(5, 7) - 1, +dt.slice(8, 10), +dt.slice(11, 13), +dt.slice(14, 16)).getTime();
+function kmBetween(a, b){ const R = 6371, r = x => x * Math.PI / 180; const dLat = r(b.lat - a.lat), dLon = r(b.lon - a.lon); const h = Math.sin(dLat / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(dLon / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); }
+async function thumbOf(file){ try { const img = await createImageBitmap(file); const s = 220 / Math.max(img.width, img.height); const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(img.width * Math.min(1, s))); c.height = Math.max(1, Math.round(img.height * Math.min(1, s))); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); if (img.close) img.close(); const b = await new Promise(r => c.toBlob(r, 'image/jpeg', .7)); return URL.createObjectURL(b); } catch (e) { return URL.createObjectURL(file); } }
+
+let imp = null;   // the import in progress; lives only on this phone until "Make memories"
+ACT.importStart = tripId => { const f = document.createElement('input'); f.type = 'file'; f.accept = 'image/*'; f.multiple = true; f.style.display = 'none'; document.body.appendChild(f); f.onchange = () => { const files = Array.from(f.files || []); f.remove(); if (files.length) importRead(tripId, files); }; f.click(); };
+async function importRead(tripId, files){
+  imp = { tripId, items: [], groups: [], stage: 'reading', done: 0, total: files.length }; go('import', { id: tripId });
+  const now = Date.now();
+  for (const [i, file] of files.entries()) {
+    let ex = null; try { ex = readExif(await file.slice(0, 512 * 1024).arrayBuffer()); if (!ex && /hei[cf]/i.test(file.type + file.name) && file.size < 25e6) ex = readExif(await file.arrayBuffer()); } catch (e) {}
+    ex = ex || {}; let dt = ex.dt || '', guessed = false;
+    // no EXIF time: fall back to the file's date, unless that's just "now" (the picker re-saved it)
+    if (!dt && file.lastModified && now - file.lastModified > 10 * 60000) { const d = new Date(file.lastModified); dt = isoDate(d) + 'T' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); guessed = true; }
+    const screen = !ex.make && !ex.model && (/png/i.test(file.type) || /screenshot/i.test(file.name));
+    imp.items.push({ id: 'i' + i, file, dt, guessed, lat: ex.lat, lon: ex.lon, screen, hasExif: !!ex.dt, thumb: await thumbOf(file), out: false });
+    imp.done = i + 1; const pr = $('#imp-prog'); if (pr) pr.textContent = `Reading ${imp.done} of ${imp.total}…`;
+  }
+  importGroup(); imp.stage = 'review'; if (route.name === 'import') render(); importPlaces();
+}
+function importGroup(){
+  const t = D.trip(imp.tripId); const its = imp.items; const groups = [];
+  const timed = its.filter(x => x.dt && !x.screen).sort((a, b) => a.dt.localeCompare(b.dt));
+  let g = null;
+  for (const x of timed) { const prev = g && g.items.length ? imp.items.find(y => y.id === g.items[g.items.length - 1]) : null;
+    const far = prev && prev.lat != null && x.lat != null && kmBetween(prev, x) > 1.5;
+    if (!g || prev.dt.slice(0, 10) !== x.dt.slice(0, 10) || dtMs(x.dt) - dtMs(prev.dt) > 90 * 60000 || far) { g = { id: 'g' + groups.length, kind: 'time', items: [], date: x.dt.slice(0, 10) }; groups.push(g); }
+    g.items.push(x.id); }
+  const unknown = its.filter(x => !x.dt && !x.screen); if (unknown.length) groups.push({ id: 'gu', kind: 'unknown', items: unknown.map(x => x.id), date: t ? (today() >= t.start && today() <= t.end ? today() : t.start) : today() });
+  const screens = its.filter(x => x.screen); if (screens.length) groups.push({ id: 'gs', kind: 'screens', items: screens.map(x => x.id), date: screens[0].dt ? screens[0].dt.slice(0, 10) : (t ? t.start : today()), skip: true });
+  groups.forEach(g => { g.outside = !!(t && (g.date < t.start || g.date > t.end)) && g.kind === 'time'; if (g.outside) g.skip = true; importGuess(g); });
+  imp.groups = groups;
+}
+function groupItems(g){ return g.items.map(id => imp.items.find(x => x.id === id)).filter(Boolean); }
+function groupSpan(g){ const ts = groupItems(g).filter(x => x.dt).map(x => x.dt).sort(); return ts.length ? { a: ts[0], b: ts[ts.length - 1] } : null; }
+// a name for the group: a plan or booking at that time, else the time of day (+ the place, once known)
+function importGuess(g){
+  if (g.edited) return; const sp = groupSpan(g);
+  if (g.kind === 'screens') { g.title = 'Screenshots'; return; } if (g.kind === 'unknown' || !sp) { g.title = ''; return; }
+  const a = dtMin(sp.a), b = dtMin(sp.b);
+  const plans = D.moments().filter(m => m.date === g.date && (m.kind === 'plan' || m.kind === 'booking') && !m.flight && (m.time || ''));
+  const hit = plans.find(m => { const h = hm2(m.time); return h != null && h >= a - 60 && h <= b + 30; });
+  if (hit) { g.title = hit.title || hit.text; g.from = 'plan'; return; }
+  const fl = D.moments().find(m => m.flight && m.date === g.date && hm2(m.flight.arr) != null && a >= hm2(m.flight.arr) - 30 && a <= hm2(m.flight.arr) + 120);
+  if (fl) { g.title = 'Landed in ' + (AIRPORTS[fl.flight.to] || fl.flight.to); g.from = 'flight'; return; }
+  const part = a < 300 ? 'Late night' : a < 690 ? 'Morning' : a < 870 ? 'Midday' : a < 1050 ? 'Afternoon' : a < 1290 ? 'Evening' : 'Late night';
+  g.title = part + (g.place && g.place.name ? ' · ' + g.place.name : ''); g.from = 'time';
+}
+function hm2(s){ const m = String(s || '').match(/(\d{1,2}):(\d{2})\s*([ap])?/i); if (!m) return null; let h = +m[1]; if (m[3]) { const pm = /p/i.test(m[3]); if (pm && h < 12) h += 12; if (!pm && h === 12) h = 0; } return h * 60 + +m[2]; }
+// look up a place name for each group that has a location (one request a second, as OpenStreetMap asks)
+async function importPlaces(){ const mine = imp; if (!mine) return;
+  for (const g of mine.groups) { if (imp !== mine || mine.stage !== 'review') return; const x = groupItems(g).find(y => y.lat != null); if (!x || g.place) continue;
+    const p = await reverseGeo(x.lat, x.lon); g.place = { lat: x.lat, lon: x.lon, name: p ? p.name : '', area: p ? p.area : '' }; importGuess(g);
+    if (route.name === 'import' && !sheet && !(document.activeElement && document.activeElement.classList.contains('imptitle'))) render(); await new Promise(r => setTimeout(r, 1100)); } }
+function renderImport(app){
+  const t = D.trip(route.id);
+  if (!imp || imp.tripId !== route.id) { app.innerHTML = `<div class="screen"><div class="bar"><button data-go="${t ? 'trip/' + t.id : 'trips'}">‹ ${t ? esc(t.city) : 'Trips'}</button><span>Import</span></div><h1 class="hd">Import photos</h1><div class="sub" style="text-align:left">Pick a pile of photos from the trip. They're sorted into days and moments for you to check before anything is saved.</div>${t ? `<button class="btn block" data-act="importStart|${t.id}">Choose photos</button>` : ''}</div>${nav('trips')}`; return; }
+  if (imp.stage === 'reading') { app.innerHTML = `<div class="screen"><div class="bar"><span></span><span>Import</span></div><h1 class="hd">Sorting your photos</h1><div class="glass"><div class="row"><span id="imp-prog">Reading ${imp.done} of ${imp.total}…</span><span class="spin"></span></div><div class="l" style="margin-top:6px">Nothing is saved yet. Keep the app open.</div></div></div>`; return; }
+  if (imp.stage === 'saving') { app.innerHTML = `<div class="screen"><div class="bar"><span></span><span>Import</span></div><h1 class="hd">Making memories</h1><div class="glass"><div class="row"><span id="imp-prog">${imp.saved || 0} of ${imp.toSave || 0}…</span><span class="spin"></span></div><div class="l" style="margin-top:6px">Keep the app open — photos upload in the background after.</div></div></div>`; return; }
+  const its = imp.items; const withT = its.filter(x => x.hasExif).length, withL = its.filter(x => x.lat != null).length;
+  const days = [...new Set(imp.groups.map(g => g.date))].sort(); const live = imp.groups.filter(g => !g.skip && groupItems(g).some(x => !x.out));
+  const card = (g, i, list) => { const gi = groupItems(g); const sp = groupSpan(g); const n = gi.filter(x => !x.out).length; const nxt = list[i + 1];
+    return `<div class="glass impg ${g.skip ? 'skip' : ''}"><div class="row" style="gap:8px"><input class="in imptitle" data-act="impTitle|${g.id}" data-on="change" value="${esc(g.title || '')}" placeholder="${g.kind === 'unknown' ? 'What were these?' : 'Name this moment'}"><button class="chip ${g.skip ? '' : 'on'}" data-act="impSkip|${g.id}">${g.skip ? 'Skipped' : '✓ Keep'}</button></div>
+      <div class="l" style="margin-top:4px">${g.kind === 'unknown' ? 'No time on these · ' : g.kind === 'screens' ? 'Screenshots · ' : sp ? imgTime(sp.a) + (sp.b !== sp.a ? ' – ' + imgTime(sp.b) : '') + ' · ' : ''}${n} photo${n === 1 ? '' : 's'}${g.place && (g.place.name || g.place.area) ? ' · 📍 ' + esc(g.place.name || g.place.area) : ''}${g.from === 'plan' ? ' · from your plans' : ''}${g.outside ? ' · outside the trip dates' : ''}</div>
+      <div class="impstrip">${gi.map(x => `<button class="${x.out ? 'out' : ''}" data-act="impToggle|${x.id}"><img src="${x.thumb}" alt="">${x.dt && g.kind !== 'unknown' ? `<span>${imgTime(x.dt)}</span>` : ''}</button>`).join('')}</div>
+      <div class="row" style="margin-top:8px;gap:6px;justify-content:flex-start;flex-wrap:wrap">${g.kind === 'unknown' || g.kind === 'screens' ? `<input class="in" type="date" value="${g.date}" data-act="impDate|${g.id}" data-on="change" style="width:auto;padding:5px 8px;font-size:12px">` : ''}${gi.length > 1 && g.kind === 'time' ? `<button class="chip" data-act="impSplit|${g.id}">Split</button>` : ''}${nxt && nxt.kind === 'time' && g.kind === 'time' ? `<button class="chip" data-act="impMerge|${g.id}">Merge with next</button>` : ''}<span class="l" style="margin-left:auto">tap a photo to leave it out</span></div></div>`; };
+  app.innerHTML = `<div class="screen"><div class="bar"><button data-act="impCancel">Cancel</button><span>${its.length} photos</span></div><h1 class="hd">Check your moments</h1>
+    <div class="glass deep" style="font-size:12.5px"><div class="row"><span>Time taken</span><span class="l">${withT} of ${its.length}</span></div><div class="row" style="margin-top:4px"><span>Location</span><span class="l">${withL} of ${its.length}</span></div>${!withL ? `<div class="l" style="margin-top:6px">Your phone didn't share locations, so places aren't guessed. Choosing photos through Files usually keeps them.</div>` : ''}${withT < its.length ? `<div class="l" style="margin-top:6px">Photos without a time are grouped at the end — pick their day there.</div>` : ''}</div>
+    ${days.map(d => { const list = imp.groups.filter(g => g.date === d && g.kind === 'time'); const extra = imp.groups.filter(g => g.date === d && g.kind !== 'time'); const all = list.concat(extra); return all.length ? `<div class="l">${fmtDow(d)} ${MON[parseDate(d).getMonth()]}${t && d >= t.start && d <= t.end ? ' · day ' + (daysBetween(t.start, d) + 1) : ''}</div>${all.map((g, i) => card(g, i, all)).join('')}` : ''; }).join('')}
+    <div class="impbar"><span class="l">${live.length} memor${live.length === 1 ? 'y' : 'ies'} · ${live.reduce((s, g) => s + groupItems(g).filter(x => !x.out).length, 0)} photos</span><button class="btn sm" data-act="impSave" ${live.length ? '' : 'disabled'}>Make memories</button></div>
+  </div>${nav('trips')}`;
+}
+const impG = id => imp && imp.groups.find(g => g.id === id);
+ACT.impTitle = (id, el) => { const g = impG(id); if (g) { g.title = el.value.trim(); g.edited = true; } };
+ACT.impSkip = id => { const g = impG(id); if (g) { g.skip = !g.skip; render(); } };
+ACT.impToggle = id => { const x = imp && imp.items.find(y => y.id === id); if (x) { x.out = !x.out; render(); } };
+ACT.impDate = (id, el) => { const g = impG(id); if (g && el.value) { g.date = el.value; render(); } };
+ACT.impMerge = id => { const i = imp.groups.findIndex(g => g.id === id); const g = imp.groups[i]; const list = imp.groups.filter(x => x.date === g.date && x.kind === 'time'); const nxt = list[list.indexOf(g) + 1]; if (!nxt) return; g.items = g.items.concat(nxt.items); if (!g.place && nxt.place) g.place = nxt.place; g.skip = g.skip && nxt.skip; imp.groups = imp.groups.filter(x => x !== nxt); importGuess(g); render(); };
+// split at the biggest gap in time
+ACT.impSplit = id => { const g = impG(id); const gi = groupItems(g); if (gi.length < 2) return; let at = 1, best = -1; for (let i = 1; i < gi.length; i++) { const gap = gi[i].dt && gi[i - 1].dt ? dtMs(gi[i].dt) - dtMs(gi[i - 1].dt) : 0; if (gap > best) { best = gap; at = i; } } if (best <= 0) at = Math.ceil(gi.length / 2);
+  const ng = { id: 'g' + Date.now().toString(36), kind: 'time', date: g.date, items: g.items.slice(at), place: g.place, outside: g.outside, skip: g.skip }; g.items = g.items.slice(0, at); g.edited = false; imp.groups.splice(imp.groups.indexOf(g) + 1, 0, ng); importGuess(g); importGuess(ng); render(); };
+ACT.impCancel = async () => { if (!await ask('Stop importing?', { sub: 'Nothing has been saved.', ok: 'Stop', no: 'Keep going' })) return; const id = imp && imp.tripId; imp.items.forEach(x => { try { URL.revokeObjectURL(x.thumb); } catch (e) {} }); imp = null; go('trip', { id }); };
+ACT.impSave = async () => {
+  const live = imp.groups.filter(g => !g.skip && groupItems(g).some(x => !x.out)); if (!live.length) return;
+  const me = D.me(); const t0 = D.trip(imp.tripId); const mine = imp; imp.stage = 'saving'; imp.saved = 0; imp.toSave = live.reduce((s, g) => s + groupItems(g).filter(x => !x.out).length, 0); render();
+  let made = 0;
+  for (const g of live) {
+    const photos = [];
+    for (const x of groupItems(g).filter(x => !x.out)) { const blob = await shrink(x.file); const asset = await Store.putBlob(blob, 'jpg'); photos.push({ asset, polaroid: false, stickers: [], taken: x.dt ? x.dt.slice(11, 16) : '' }); mine.saved++; const pr = $('#imp-prog'); if (pr) pr.textContent = `${mine.saved} of ${mine.toSave}…`; }
+    const sp = groupSpan(g); const trip = t0 && g.date >= t0.start && g.date <= t0.end ? t0 : D.tripForDate(g.date);
+    await Store.put('moments', { id: Store.uid(), tripId: trip ? trip.id : '', date: g.date, authorId: me.id, kind: 'moment', text: g.title || '', photos, items: [], time: sp && g.kind === 'time' ? sp.a.slice(11, 16) : '', place: g.place && g.place.lat != null ? g.place : null, imported: true, createdAt: sp && g.kind === 'time' ? dtMs(sp.a) : Date.now() + made, addedAt: Date.now() });
+    made++;
+  }
+  // one note for the other phone ("Des added 42 photos from Toronto") instead of one per memory
+  await Store.put('imports', { id: Store.uid(), by: me.id, tripId: t0 ? t0.id : '', count: mine.saved, memories: made, at: Date.now() });
+  mine.items.forEach(x => { try { URL.revokeObjectURL(x.thumb); } catch (e) {} }); imp = null;
+  toast(made + ' memor' + (made === 1 ? 'y' : 'ies') + ' added'); go(t0 ? 'days' : 'memories', t0 ? { id: t0.id } : null);
+};
+
+// ---------- V2.9: export everything / restore ----------
+// One zip: every photo, voice note, chat photo and sticker in folders by date, readable text files,
+// a budget per trip, and backup.json (everything the app needs to rebuild itself from the zip).
+function exportScope(){ const me = D.me().id; const hide = new Set();
+  // surprises stay surprises: the other person's unopened presents, wishes, hidden occasions and hidden plans
+  Store.all('presents').forEach(p => { if (p.fromUser !== me && !(p.forUser === me && todayIn(D.me()) >= p.date)) hide.add(p.id); });
+  Store.all('wishes').forEach(w => { if (w.userId !== me) hide.add(w.id); });
+  Store.all('trips').forEach(t => { if (t.occasion && t.secret && t.authorId && t.authorId !== me) hide.add(t.id); });
+  Store.all('moments').forEach(m => { if ((m.kind === 'plan' && m.hidden && m.authorId && m.authorId !== me) || hide.has(m.tripId)) hide.add(m.id); });
+  ['push', 'pushtest', 'pushlog'].forEach(c => Store.all(c).forEach(x => hide.add(x.id)));
+  return hide; }
+function exportCounts(){ const hide = exportScope(); const ms = Store.all('moments').filter(m => !hide.has(m.id));
+  return { photos: ms.reduce((s, m) => s + (m.photos||[]).length, 0), voices: ms.reduce((s, m) => s + D.voices(m).length, 0), chat: D.bubbles().filter(b => b.photo).length, stickers: D.stickers().length, memories: ms.filter(m => m.kind === 'moment').length, trips: D.trips().length }; }
+ACT.exportAll = () => { const c = exportCounts();
+  openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Backup</span></div><h2 class="hd md" style="margin:0">Export everything</h2>
+    <div class="glass deep env"><div class="row"><span>Photos</span><span class="l">${c.photos}</span></div><div class="row"><span>Voice notes</span><span class="l">${c.voices}</span></div><div class="row"><span>Chat photos</span><span class="l">${c.chat}</span></div><div class="row"><span>Stickers</span><span class="l">${c.stickers}</span></div><div class="row"><span>Memories, plans, lists, chat</span><span class="l">text</span></div><div class="row"><span>Budgets</span><span class="l">${c.trips} × .xlsx</span></div></div>
+    <div class="sub" style="text-align:left">One zip. Keep it in Google Drive or Files — <b>Restore a backup</b> can rebuild the app from it. Photos still on the server are downloaded first, so big libraries take a minute.</div>
+    <div id="exp-prog" class="l"></div>
+    <button class="btn block" data-act="doExportAll">Make the zip</button><button class="row l" style="justify-content:center" data-act="exportJson">or just the data (.json, small)</button>`); };
+ACT.exportJson = () => { const hide = exportScope(); download(new Blob([JSON.stringify(JSON.parse(Store.exportJSON()).filter(r => !hide.has(r.id)), null, 2)], { type: 'application/json' }), 'des-jett-backup-' + today() + '.json'); };
+const safeName = s => String(s || '').replace(/[\/\\:*?"<>|#%]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
+ACT.doExportAll = async () => {
+  if (!window.JSZip) { toast('Zip library didn\'t load — saving the data only'); return ACT.exportJson(); }
+  const hide = exportScope(); const recs = JSON.parse(Store.exportJSON()).filter(r => !hide.has(r.id)); const keep = new Set(recs.map(r => r.id));
+  const zip = new JSZip(); const files = {}; const prog = $('#exp-prog'); let n = 0, missing = 0;
+  const jobs = []; const names = {};
+  const uniq = path => { if (!names[path]) { names[path] = 1; return path; } const i = path.lastIndexOf('.'); let k = 2; while (names[path.slice(0, i) + ' ' + k + path.slice(i)]) k++; const p = path.slice(0, i) + ' ' + k + path.slice(i); names[p] = 1; return p; };
+  const want = (asset, path) => { if (asset && !files[asset] && !jobs.some(j => j.asset === asset)) jobs.push({ asset, path: uniq(path) }); };
+  const ms = Store.all('moments').filter(m => keep.has(m.id)).sort((a, b) => (a.date + String(a.createdAt||0).padStart(15,'0')).localeCompare(b.date + String(b.createdAt||0).padStart(15,'0')));
+  ms.forEach(m => { const t = m.tripId ? Store.get('trips', m.tripId) : null; const dir = m.date + (t ? ' ' + safeName(t.city) : '');
+    (m.photos||[]).forEach((p, i) => want(p.asset, `Photos/${dir}/${m.date}${m.text ? ' ' + safeName(m.text).slice(0, 30) : ''} ${i + 1}.${(p.asset.split('.').pop() || 'jpg')}`));
+    D.voices(m).forEach((v, i) => want(v.asset, `Voice notes/${m.date} ${safeName(v.name || m.text || 'voice').slice(0, 30)} ${i + 1}.${v.asset.split('.').pop()}`));
+    if (m.attachment && m.attachment.asset) want(m.attachment.asset, `Bookings/${m.date} ${safeName(m.attachment.name || 'confirmation')}`); });
+  Store.all('presents').filter(p => keep.has(p.id)).forEach(p => { (p.photos||[]).forEach((ph, i) => want(ph.asset, `Presents/${p.date} ${i + 1}.jpg`)); D.voices(p).forEach((v, i) => want(v.asset, `Presents/${p.date} voice ${i + 1}.${v.asset.split('.').pop()}`)); });
+  D.bubbles().forEach(b => { if (b.photo) want(b.photo, `Chat/${isoDate(new Date(b.at))} ${safeName((D.user(b.userId)||{}).name)}.jpg`); if (b.sticker && b.sticker.asset) want(b.sticker.asset, `Stickers/sticker.png`); });
+  D.stickers().forEach(s => want(s.asset, `Stickers/sticker.png`));
+  for (const j of jobs) { const b = await Store.blob(j.asset).catch(() => null); n++; if (b) { zip.file(j.path, b); files[j.asset] = j.path; } else missing++; if (prog) prog.textContent = `Collecting ${n} of ${jobs.length}…`; }
+  // readable copies
+  const who = id => (D.user(id) || {}).name || '';
+  const memTxt = ms.filter(m => m.kind !== 'plan').map(m => { const t = m.tripId ? Store.get('trips', m.tripId) : null; return [`${m.date}${m.time ? ' ' + m.time : ''} · ${who(m.authorId)}${t ? ' · ' + t.city : ''}`, m.flight ? `  ✈ ${m.flight.no || ''} ${m.flight.from || ''} → ${m.flight.to || ''} ${m.flight.dep || ''}–${m.flight.arr || ''}` : '', m.text ? '  ' + m.text : '', m.place && m.place.name ? '  📍 ' + m.place.name : '', ...D.costLines(m).map(c => `  $${c.amount} ${c.label || ''} (${c.tag || 'other'}) · ${D.payerTextC(c)}`), ...D.songs(m).map(s => `  ♫ ${s.title || ''} ${s.artist ? '— ' + s.artist : ''} ${s.url}`), ...(m.photos||[]).map((p, i) => p.caption ? `  photo ${i + 1}: ${p.caption}` : ''), ...D.voices(m).map(v => `  ● voice note ${fmtDur(v.dur)}`)].filter(Boolean).join('\n'); }).join('\n\n');
+  zip.file('Memories.txt', memTxt || 'No memories yet.');
+  zip.file('Plans.txt', ms.filter(m => m.kind === 'plan').map(p => `${p.date}${p.time ? ' ' + p.time : ''} · ${p.title || ''}${p.note ? ' — ' + p.note : ''}`).join('\n') || 'No plans.');
+  zip.file('Chat.txt', D.bubbles().slice().sort((a, b) => a.at - b.at).map(b => { const d = new Date(b.at); return `${isoDate(d)} ${d.toTimeString().slice(0, 5)} ${who(b.userId)}${b.kind === 'think' ? ' (thinking)' : ''}: ${b.photo ? '[photo] ' + (b.auto ? '' : b.text) : b.sticker ? '[sticker]' : b.text}`; }).join('\n') || 'Nothing yet.');
+  zip.file('Lists.txt', D.lists().map(l => `${l.icon || ''} ${l.label}\n` + D.listItems().filter(i => i.list === l.key).map(i => `  [${i.done ? 'x' : ' '}] ${i.text}${i.city ? ' (' + i.city + ')' : ''}${i.note ? ' — ' + i.note : ''}${i.link ? ' ' + i.link : ''}`).join('\n')).join('\n\n'));
+  D.trips().concat(D.occasions()).forEach(t => { const x = budgetWorkbook(t); const nm = `Budgets/${t.start} ${safeName(t.city)}`; if (x) zip.file(uniq(nm + '.xlsx'), x); else zip.file(uniq(nm + '.csv'), budgetCsv(t)); });
+  zip.file('backup.json', JSON.stringify({ app: 'des-jett', version: 2, made: new Date().toISOString(), by: D.me().id, docs: recs, files }, null, 1));
+  zip.file('README.txt', 'Des & Jett backup, made ' + new Date().toString() + '\n\nPhotos, voice notes, chat photos and stickers are in their folders, named by date.\nMemories.txt, Plans.txt, Chat.txt and Lists.txt are readable copies.\nTo rebuild the app: Profile → Restore a backup → pick this zip.\n');
+  if (prog) prog.textContent = 'Zipping…';
+  const blob = await zip.generateAsync({ type: 'blob' }); const f = new File([blob], `des-jett-${today()}.zip`, { type: 'application/zip' }); closeSheet();
+  if (missing) toast(missing + ' file' + (missing === 1 ? '' : 's') + ' couldn\'t be downloaded — try again with signal');
+  if (navigator.canShare && navigator.canShare({ files: [f] })) { try { await navigator.share({ files: [f], title: 'Des & Jett backup' }); return; } catch (e) {} } download(blob, f.name); if (!missing) toast('Saved');
+};
+const EXT_TYPE = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', heic: 'image/heic', m4a: 'audio/mp4', mp4: 'audio/mp4', webm: 'audio/webm', mp3: 'audio/mpeg', wav: 'audio/wav', aac: 'audio/aac', pdf: 'application/pdf' };
+ACT.importAll = () => { const f = document.createElement('input'); f.type = 'file'; f.accept = '.json,.zip,application/json,application/zip'; f.style.display = 'none'; document.body.appendChild(f);
+  f.onchange = async () => { const file = f.files[0]; f.remove(); if (!file) return; try {
+    if (/\.zip$/i.test(file.name) || file.type.includes('zip')) {
+      if (!window.JSZip) return toast('Zip library didn\'t load — try again with signal');
+      toast('Restoring…'); const zip = await JSZip.loadAsync(file); const bj = zip.file('backup.json'); if (!bj) return toast('That zip isn\'t a Des & Jett backup');
+      const data = JSON.parse(await bj.async('string')); let nb = 0;
+      for (const [asset, path] of Object.entries(data.files || {})) { const zf = zip.file(path); if (!zf) continue; const buf = await zf.async('arraybuffer'); await Store.restoreBlob(asset, new Blob([buf], { type: EXT_TYPE[(asset.split('.').pop() || '').toLowerCase()] || '' })); nb++; }
+      const n = await Store.importJSON(JSON.stringify(data.docs || [])); toast(`Restored ${n} record${n === 1 ? '' : 's'} and ${nb} file${nb === 1 ? '' : 's'}`);
+    } else { const n = await Store.importJSON(await file.text()); toast(`Restored ${n} record${n === 1 ? '' : 's'}`); }
+    render(); } catch (e) { toast('Couldn\'t restore: ' + e.message); } }; f.click(); };
+
 // ---------- boot ----------
 window.addEventListener('hashchange', () => { const [n, id] = location.hash.slice(1).split('/'); if (n && n !== route.name || id !== route.id) { route = { name: n || 'home', id }; render(); } });
 Store.onChange(() => { if (viewer) drawViewer(true); else if (!sheet) render(); });
 Store.ready = Store.connect(CFG).then(() => { const [n, id] = location.hash.slice(1).split('/'); route = { name: n || 'home', id }; render(); setInterval(applySky, 60000); syncIcs(false); checkPush(); setInterval(() => syncIcs(false), 3600000); if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(()=>{}); });
-window.DJ = { D, go, ACT, render, parseConfirmation, skyMode, Store };
+window.DJ = { D, go, ACT, render, parseConfirmation, skyMode, Store, imp: () => imp };
 })();

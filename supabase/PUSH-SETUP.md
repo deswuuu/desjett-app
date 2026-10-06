@@ -16,3 +16,24 @@ they're not stored in this folder on purpose.
 
 If a test doesn't arrive: Edge Functions → `notify` → **Logs** shows what happened.
 To stop reminders: `select cron.unschedule('dj-reminders');` in the SQL Editor.
+
+## Updating (V2.9, optional)
+Chat photos/stickers and photo imports work without this. Doing it makes the notifications nicer:
+"Des sent a photo 📷" instead of “📷 Photo”, and one "Des added 42 photos · 7 new memories from Toronto"
+for an import instead of nothing.
+1. **Edge Functions → notify → Code**: replace everything with the new `supabase/functions/notify/index.ts` → **Deploy**.
+2. **SQL Editor → New query**: run just this (it adds 'imports' to the list):
+   ```sql
+   create or replace function public.dj_notify() returns trigger language plpgsql security definer as $$
+   begin
+     if new.collection in ('bubbles','moments','comments','presents','pushtest','imports') then
+       perform net.http_post(
+         url := 'https://YOUR-PROJECT-REF.supabase.co/functions/v1/notify',
+         headers := jsonb_build_object('Content-Type','application/json','x-notify-secret','YOUR-NOTIFY-SECRET'),
+         body := jsonb_build_object('type','change','op',TG_OP,'collection',new.collection,'record',new.data,'old',case when TG_OP = 'UPDATE' then old.data else null end)
+       );
+     end if;
+     return new;
+   end $$;
+   ```
+   (same project ref and secret you used the first time — it only replaces the function, nothing is deleted.)

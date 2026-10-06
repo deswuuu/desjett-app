@@ -121,7 +121,10 @@
     },
     async blob(id){ let b = await getBlobLocal(id).catch(() => null); if (!b && sb) { const { data } = await sb.storage.from('assets').download(id); if (data) { b = data; putBlobLocal(id, b).catch(() => {}); uploaded.add(id); saveUploaded(); } } return b; },
     exportJSON(){ return JSON.stringify(Object.values(docs), null, 2); },
-    async importJSON(text){ const arr = JSON.parse(text); arr.forEach(r => { docs[r.id] = r; queue.put[r.id] = r.updated_at; }); saveLocal(); saveQueue(); emit(); scheduleFlush(); },
+    // put back a photo / voice note from a backup under its original id (uploaded again if the server lacks it)
+    async restoreBlob(id, blob){ await putBlobLocal(id, blob); urlCache.delete(id); if (!uploaded.has(id)) { queue.blob[id] = 1; saveQueue(); scheduleFlush(); } },
+    // restoring never rolls back something newer that's already here; returns how many records came back
+    async importJSON(text){ const arr = JSON.parse(text); let n = 0; arr.forEach(r => { if (!r || !r.id || !r.collection) return; const l = docs[r.id]; if (l && l.updated_at >= r.updated_at) return; docs[r.id] = r; queue.put[r.id] = r.updated_at; delete queue.del[r.id]; n++; }); saveLocal(); saveQueue(); emit(); if (sb && sbUser) await Store.pull(); else scheduleFlush(); return n; },
     wipe(){ docs = {}; queue = { put: {}, del: {}, blob: {}, blobDel: {} }; synced = new Set(); saveLocal(); saveQueue(); saveSynced(); emit(); },
     flush(){ return flush(); },
 
