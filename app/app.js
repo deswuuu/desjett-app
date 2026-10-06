@@ -158,7 +158,7 @@ function render(){
   if (!s.setup) return renderSetup(app);
   if (!D.me()) return renderWho(app);
   const R = { notify: renderNotify, chat: renderChat, howto: renderHowto, gcal: renderGcal, cat: renderCategory, home: renderHome, trips: renderTrips, trip: renderTrip, days: renderDays, budget: renderBudget, photos: renderPhotos, day: renderDay, calendar: renderCalendar, profile: renderProfile, memories: renderMemories, between: renderBetween, emails: renderEmails, moments: renderMoments, lists: renderLists, list: renderList, songs: renderSongs, map: renderMap, import: renderImport };
-  (R[route.name] || renderHome)(app);
+  (needsWhatsNew() ? renderWhatsNew : (R[route.name] || renderHome))(app);
   bind(app); bindHold(app); updateBadge();
 }
 
@@ -206,12 +206,12 @@ ACT.setupDone = async () => {
   const d = setupData; const mk = (p, id) => Object.assign({ id, name:p.name, pal:p.pal, city:p.city }, CITIES[p.city] || CITIES.Vancouver);
   const a = await Store.put('users', mk(d.a, 'u_a')); await Store.put('users', mk(d.b, 'u_b'));
   await D.saveSettings({ setup:true, tripGuess:d.guess, envelopes:d.env.filter(e => e.name), anniversary:d.anni });
-  localStorage.setItem('dj.me', a.id); howtoIdx = 0; go('howto');
+  localStorage.setItem('dj.me', a.id); markWhatsNewSeen(); howtoIdx = 0; go('howto');
 };
 function renderWho(app){
   app.innerHTML = `<div class="screen" style="min-height:calc(100vh - 140px);justify-content:center"><h1 class="hd center">Which one are you?</h1><div class="pick">${D.users().map(u => `<button data-act="iam|${u.id}"><i class="pal ${u.pal}"></i>${esc(u.name)}</button>`).join('')}</div>${Store.mode === 'supabase' && !Store.user ? `<div class="glass">${signinHTML('Sign in to sync')}</div>` : ''}</div>`; bind(app);
 }
-ACT.iam = id => { localStorage.setItem('dj.me', id); go('home'); };
+ACT.iam = id => { if (!localStorage.getItem('dj.seenVer')) markWhatsNewSeen(); localStorage.setItem('dj.me', id); go('home'); };
 let signinEmail = '';
 function signinHTML(title){ return signinEmail
   ? `<div class="l">${esc(title)}</div><div class="sub" style="margin-top:2px">We emailed a code to ${esc(signinEmail)}. Type it here — it signs in this app, not Safari.</div><input class="in" id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code" style="margin-top:8px;font-size:20px;letter-spacing:.2em;text-align:center"><div class="row" style="margin-top:8px"><button class="l" data-act="signinBack">Use a different email</button><button class="btn sm" data-act="signinCode">Sign in</button></div>`
@@ -232,7 +232,7 @@ function renderHome(app){
   const anni = D.isMonthiversary(today()), months = D.monthsSince(today());
   const gap = days == null ? 0 : Math.max(0, Math.min(1, days / 60)); const travel = Math.max(0, (Math.min(480, window.innerWidth) - 52 - 220) / 2); const px = (anni || sameCity) ? Math.round(travel + 6) : Math.round((1 - gap) * travel - 4);
   // long bubbles stop at the middle and show two lines, then "…" (the whole thing is in Chat)
-  const bub = (b, side) => b ? `<button class="bub ${b.kind} ${side}" data-go="chat" style="${side==='r'?'right:'+(6+px):'left:'+(6+px)}px;top:${b.kind==='think'?0:6}px;max-width:min(150px, calc(50% - ${14+px}px))"><span class="bt">${esc(b.text)}</span></button>` : '';
+  const bub = (b, side) => b ? `<button class="bub ${b.kind} ${side}" data-go="chat" style="${side==='r'?'right:'+(6+px):'left:'+(6+px)}px;top:${b.kind==='think'?0:6}px;max-width:min(150px, calc(50% - ${14+px}px))">${b.photo ? `<span class="bph"><span class="bimg"><img data-asset="${b.photo}" alt=""></span>${b.auto ? '' : `<span class="bt">${esc(b.text)}</span>`}</span>` : b.sticker ? stkHTML(b.sticker, 'bstk') : `<span class="bt">${esc(b.text)}</span>`}</button>` : '';
   const flightDay = t && today() === t.start && D.tripMoments(t.id).find(m => m.flight);
   const cost = t ? D.tripCost(t) : null, plan = t ? D.planTotal(t) : 0;
   const lastTrip = !t ? D.trips().filter(x => x.end < today()).slice(-1)[0] || null : null;
@@ -268,7 +268,7 @@ function renderHome(app){
     <button class="glass pill row tap" style="display:flex" data-go="lists"><span class="l">Things to do together</span><span style="font-size:13px;font-weight:500">${(() => { const n = D.listItems().filter(i => !i.done).length; return n ? n + ' on the list ›' : 'start a list ›'; })()}</span></button>
     <div class="l">Recent memories</div>
     <div class="feed" style="margin-top:-8px">${recent.length ? recent.map(momentRow).join('') : '<div class="empty">Nothing yet. Tap + to add a moment.</div>'}</div>
-  </div><button class="fab" data-act="newMoment">+</button>${nav('home')}`;
+  </div><button class="fab" data-act="homeAdd">+</button>${nav('home')}`;
   [L,R].forEach(u => u && weather(u).then(w => { const el = $('#wx-' + u.id); if (el && w) el.innerHTML = wx(w.icon); }));
 }
 function momentRow(m){
@@ -292,21 +292,35 @@ ACT.bubble = uid => {
     <div class="seg"><button class="${kind==='say'?'on':''}" data-act="bubKind|say">Say</button><button class="${kind==='think'?'on':''}" data-act="bubKind|think">Think</button></div>
     <div class="bub ${kind}" style="position:relative;left:0;top:0;align-self:flex-start;font-size:15px;padding:10px 16px;margin-top:4px;max-width:100%"><input id="bub-text" class="in" style="background:transparent;border:0;padding:0;font-size:15px;width:180px" placeholder="${kind==='say'?'say something':'what are you thinking?'}"></div>
     <div class="chips">${chips[kind].map(c => `<button class="chip" data-act="bubChip|${esc(c)}">${esc(c)}</button>`).join('')}</div>
-    <div class="row" style="margin-top:6px"><span class="l">Shows for a day</span><button class="btn sm" data-act="bubSend">Send</button></div>`;
+    <div class="row" style="margin-top:6px"><span style="display:flex;gap:6px"><button class="chip" data-act="bubPhoto">◫ Photo</button><button class="chip" data-act="chatStk">☺ Sticker</button></span><button class="btn sm" data-act="bubSend">Send</button></div>
+    <div class="l">Shows on Home for a day, and stays in Chat</div><input type="file" id="bub-file" accept="image/*" multiple hidden data-act="bubFiles" data-on="change">`;
   ACT.bubKind = k => { kind = k; openSheet(draw(), () => $('#bub-text').focus()); };
   ACT.bubChip = c => { $('#bub-text').value = c; };
+  ACT.bubPhoto = () => $('#bub-file').click();
+  // a photo from Home goes to Chat like any message; anything typed becomes its caption
+  ACT.bubFiles = async (a, el) => { const files = Array.from(el.files || []); if (!files.length) return; const text = ($('#bub-text') || {}).value ? $('#bub-text').value.trim() : ''; toast(files.length === 1 ? 'Sending…' : 'Sending ' + files.length + ' photos…');
+    for (const [i, f] of files.entries()) { const blob = await shrink(f); const asset = await Store.putBlob(blob, 'jpg'); await Store.put('bubbles', { id: Store.uid(), userId: me.id, kind: 'say', photo: asset, text: i === 0 && text ? text : '📷 Photo', auto: !(i === 0 && text), at: Date.now() + i }); }
+    closeSheet(); render(); toast('Sent'); };
   ACT.bubSend = async () => { const text = $('#bub-text').value.trim(); if (!text) return; await Store.put('bubbles', { id: Store.uid(), userId: me.id, kind, text, at: Date.now() }); closeSheet(); render(); };
   openSheet(draw(), () => $('#bub-text').focus());
 };
 ACT.closeSheet = () => closeSheet();
 
 // ---------- trips ----------
-let tripsTab = 'upcoming';
+let tripsTab = null;
 function renderTrips(app){
-  const t0 = today(); const up = D.trips().filter(t => t.end >= t0), past = D.trips().filter(t => t.end < t0).reverse();
+  const t0 = today(); const now = D.trips().filter(t => t.start <= t0 && t.end >= t0), up = D.trips().filter(t => t.start > t0), past = D.trips().filter(t => t.end < t0).reverse();
   const yearOf = t => t.start.slice(0,4);
+  // the trip you're on gets its own tab, and opens first
+  if (!tripsTab || (tripsTab === 'now' && !now.length)) tripsTab = now.length ? 'now' : 'upcoming';
   let body;
-  if (tripsTab === 'upcoming') {
+  if (tripsTab === 'now') {
+    body = now.map(t => { const n = daysBetween(t.start, t.end) + 1, d = daysBetween(t.start, t0) + 1; const ms = D.tripMoments(t.id).filter(m => m.kind === 'moment'); const td = D.tripMoments(t.id).filter(m => m.date === t0 && m.kind !== 'booking');
+      return `<div class="l">Happening now</div><button class="glass tap" style="margin-top:-6px" data-go="trip/${t.id}"><div class="row"><span style="font-size:22px;font-weight:500;letter-spacing:-.02em">${esc(t.city)}</span><span class="chip on" style="font-size:10.5px;padding:3px 9px">Day ${d} of ${n}</span></div><div class="sub" style="text-align:left">${fmtD(t.start)} – ${fmtD(t.end)} · ${ms.length} memor${ms.length === 1 ? 'y' : 'ies'} so far</div><div class="tripbar"><i style="width:${Math.round(d / n * 100)}%"></i></div></button>
+        <div class="tiles"><button data-go="day/${t.id}_${t0}"><b>Today</b><span>${td.length ? td.length + ' thing' + (td.length === 1 ? '' : 's') : 'add something'}</span></button><button data-go="days/${t.id}"><b>Days</b><span>${n} days</span></button><button data-go="budget/${t.id}"><b>Budget</b><span>${money(D.tripCost(t).total)}</span></button></div>
+        <div class="list" style="font-size:13.5px;margin-top:-4px"><button class="row" data-act="importStart|${t.id}"><span>Import photos</span><span class="l">sorts them into days ›</span></button></div>`; }).join('')
+      + (up[0] ? `<div class="l mt-auto">Up next</div><div class="list" style="margin-top:-6px"><button class="row" data-go="trip/${up[0].id}"><div style="text-align:left"><div style="font-weight:500">${esc(up[0].city)}</div><div class="l">${fmtD(up[0].start)} – ${fmtD(up[0].end)}</div></div><span class="l">${daysBetween(t0, up[0].start)} days ›</span></button></div>` : '');
+  } else if (tripsTab === 'upcoming') {
     const first = up[0];
     body = `${first ? `<div class="l">Up next</div><button class="glass tap" style="margin-top:-6px" data-go="trip/${first.id}">${tripHero(first)}</button>` : '<div class="empty">No upcoming trip. Add one with +</div>'}
       ${up.length > 1 ? `<div class="list">${up.slice(1).map(t => `<button class="row" data-go="trip/${t.id}"><div style="text-align:left"><div style="font-weight:500">${esc(t.city)}</div><div class="l">${fmtD(t.start)} – ${fmtD(t.end)}</div></div><span class="l">${t.flyer ? palOf(t.flyer) + ' flies' : ''}</span></button>`).join('')}</div>` : ''}
@@ -316,7 +330,7 @@ function renderTrips(app){
     body += `<button class="btn lite block mt-auto" data-act="addTrip|past">Add a past trip</button>`;
   }
   app.innerHTML = `<div class="screen" style="min-height:calc(100vh - 160px)"><div class="bar"><h1 class="hd" style="font-size:32px">Trips</h1><button class="plus" data-act="addTrip|new">+</button></div>
-    <div class="seg"><button class="${tripsTab==='upcoming'?'on':''}" data-act="tripsTab|upcoming">Upcoming</button><button class="${tripsTab==='past'?'on':''}" data-act="tripsTab|past">Past</button></div>${body}</div>${nav('trips')}`;
+    <div class="seg">${now.length ? `<button class="${tripsTab==='now'?'on':''}" data-act="tripsTab|now">Now</button>` : ''}<button class="${tripsTab==='upcoming'?'on':''}" data-act="tripsTab|upcoming">Upcoming</button><button class="${tripsTab==='past'?'on':''}" data-act="tripsTab|past">Past</button></div>${body}</div>${nav('trips')}`;
 }
 ACT.tripsTab = t => { tripsTab = t; render(); };
 function tripHero(t){ const c = D.tripCost(t), p = D.planTotal(t); const d = daysBetween(today(), t.start); const [a, b] = D.users2(); return `<div class="row"><span style="font-size:22px;font-weight:500;letter-spacing:-.02em">${esc(t.city)}</span><span class="l">${d > 0 ? d + ' days' : d === 0 ? 'today' : 'now'}</span></div><div class="sub" style="text-align:left">${fmtD(t.start)} – ${fmtD(t.end)}${t.flyer ? ' · ' + palOf(t.flyer) + ' flies' : ''}</div><div class="row" style="margin-top:12px"><span class="num" style="font-size:24px">${money(c.total)}</span><span class="l">of ~${money(p)}</span></div>${splitBar(c, p, a, b)}`; }
@@ -458,7 +472,7 @@ function renderDay(app){
     ${photos.length ? style === 'polaroid' ? `<div class="polas">${photos.map(({p, m}) => polaroid(p, m, true)).join('')}</div><div class="stkrow"><span class="l">Stickers · tap one, then a photo</span>${stickerTray('addSticker')}</div>` : `<div class="clean">${photos.map(({p, m}) => `<button class="ph" data-act="viewPh|day:${route.id},${m.id},${m.photos.indexOf(p)}"><img data-asset="${p.asset}" alt=""></button>`).join('')}</div>` : ''}
     ${ms.filter(m => m.kind !== 'plan').map(m => dayBlock(m, t)).join('')}
     ${!ms.length ? '<div class="empty">Nothing here yet.</div>' : ''}
-    <div class="row mt-auto"><span class="l">${ms.filter(m=>m.kind!=='plan').length} moments${meals ? ' · ' + meals + ' meal' + (meals>1?'s':'') : ''}${cost ? ' · ' + money(cost) : ''}</span><span style="display:flex;gap:6px">${!plan ? `<button class="btn sm lite" data-act="addPlan|${date}${t?','+t.id:''}">+ Plan</button>` : `<button class="btn sm lite" data-act="editPlan|${plan.id}">Edit plan</button>`}<button class="btn sm" data-act="newMoment|${t ? t.id : ''},${date}">+ Add</button></span></div>
+    <div class="row mt-auto"><span class="l">${ms.filter(m=>m.kind!=='plan').length} moments${meals ? ' · ' + meals + ' meal' + (meals>1?'s':'') : ''}${cost ? ' · ' + money(cost) : ''}</span><span style="display:flex;gap:6px">${!plan ? `<button class="btn sm lite" data-act="addPlan|${date}${t?','+t.id:''}">+ Plan</button>` : `<button class="btn sm lite" data-act="editPlan|${plan.id}">Edit plan</button>`}<button class="btn sm lite" data-act="importStart|${t && !t.occasion ? t.id : ''}">Import</button><button class="btn sm" data-act="newMoment|${t ? t.id : ''},${date}">+ Add</button></span></div>
   </div>${nav(t ? 'trips' : 'calendar')}`;
   setupStickerDrag(app);
 }
@@ -892,7 +906,7 @@ function renderProfile(app){
     <div class="glass"><div class="row"><span style="font-size:13.5px">Photos</span><div class="seg" style="width:150px"><button class="${s.photoStyle==='polaroid'?'on':''}" data-act="photoStyle|polaroid">Polaroid</button><button class="${s.photoStyle==='clean'?'on':''}" data-act="photoStyle|clean">Clean</button></div></div></div>
     <div class="glass"><div class="row"><span style="font-size:13.5px">Sky</span><div class="seg" style="width:200px"><button class="${(s.sky||'auto')==='auto'?'on':''}" data-act="sky|auto">Follow</button><button class="${s.sky==='light'?'on':''}" data-act="sky|light">Light</button><button class="${s.sky==='dark'?'on':''}" data-act="sky|dark">Dark</button></div></div></div>
     <div class="glass"><div class="row"><span style="font-size:13.5px">Where I am</span><select class="in" style="width:auto;padding:6px 10px;font-size:12px" data-act="myCity" data-on="change">${Object.keys(CITIES).map(c => `<option ${me.city===c?'selected':''}>${c}</option>`).join('')}</select></div></div>
-    <div class="list" style="font-size:13.5px"><div class="row"><span>Together since</span><input class="in" type="date" value="${esc(s.anniversary||'')}" data-act="anniEdit" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div><div class="row"><span>My birthday</span><input class="in" type="date" value="${esc(me.birthday||'')}" data-act="bdayEdit|${me.id}" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div>${D.other() ? `<div class="row"><span>${esc(D.other().name)}'s birthday</span><input class="in" type="date" value="${esc(D.other().birthday||'')}" data-act="bdayEdit|${D.other().id}" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div>` : ''}<button class="row" data-go="gcal"><span>Google Calendar</span><span class="l">${(me.icsUrls||[]).length ? 'live · ' + me.icsUrls.length : 'connect'} ›</span></button><button class="row" data-go="emails"><span>Trip emails</span><span class="l">›</span></button><button class="row" data-go="notify"><span>Notifications</span><span class="l">${pushState.on ? 'on' : 'off'} ›</span></button><button class="row" data-go="chat"><span>Chat</span><span class="l">${D.bubbles().length} ›</span></button><button class="row" data-act="howto"><span>How it works</span><span class="l">›</span></button><button class="row" data-act="exportAll"><span>Export everything</span><span class="l">backup ›</span></button><button class="row" data-act="importAll"><span>Restore a backup</span><span class="l">›</span></button>
+    <div class="list" style="font-size:13.5px"><div class="row"><span>Together since</span><input class="in" type="date" value="${esc(s.anniversary||'')}" data-act="anniEdit" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div><div class="row"><span>My birthday</span><input class="in" type="date" value="${esc(me.birthday||'')}" data-act="bdayEdit|${me.id}" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div>${D.other() ? `<div class="row"><span>${esc(D.other().name)}'s birthday</span><input class="in" type="date" value="${esc(D.other().birthday||'')}" data-act="bdayEdit|${D.other().id}" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div>` : ''}<button class="row" data-go="gcal"><span>Google Calendar</span><span class="l">${(me.icsUrls||[]).length ? 'live · ' + me.icsUrls.length : 'connect'} ›</span></button><button class="row" data-go="emails"><span>Trip emails</span><span class="l">›</span></button><button class="row" data-go="notify"><span>Notifications</span><span class="l">${pushState.on ? 'on' : 'off'} ›</span></button><button class="row" data-go="chat"><span>Chat</span><span class="l">${D.bubbles().length} ›</span></button><button class="row" data-act="howto"><span>How it works</span><span class="l">›</span></button><button class="row" data-act="whatsNew"><span>What's new</span><span class="l">v${APP_VERSION} ›</span></button><button class="row" data-act="exportAll"><span>Export everything</span><span class="l">backup ›</span></button><button class="row" data-act="importAll"><span>Restore a backup</span><span class="l">›</span></button>
     ${Store.mode === 'supabase' ? `<button class="row" data-act="${Store.user?'signout':'signinSheet'}"><span>${Store.user ? 'Signed in · ' + esc(Store.user.email) : 'Sign in to sync'}</span><span class="l">›</span></button>` : `<div class="row"><span>Sync</span><span class="l">local only · add Supabase keys</span></div>`}
     <button class="row" data-act="switchUser"><span>Switch person</span><span class="l">›</span></button><button class="row" data-act="resetAll"><span class="muted">Start over</span><span class="l">›</span></button></div>
   </div>${nav('')}`;
@@ -1073,7 +1087,7 @@ function renderMemories(app){
     ${anniMoments.length ? `<div class="l">${fmtD(anniDay)} · ${D.monthsSince(anniDay)} months</div><div class="feed" style="margin-top:-8px">${anniMoments.map(momentRow).join('')}</div>` : ''}
     ${ms.filter(m => !anniMoments.includes(m)).length ? `<div class="l">Moments</div><div class="feed" style="margin-top:-8px">${ms.filter(m => !anniMoments.includes(m)).sort((a,b) => b.date.localeCompare(a.date)).slice(0,4).map(momentRow).join('')}</div>` : future ? '<div class="empty">Nothing here yet.</div>' : ''}
     ${!future ? `<button class="row" style="font-size:13.5px" data-go="chat"><span>Chat</span><span class="l">${D.bubbles().filter(b => isoDate(new Date(b.at)).startsWith(ym)).length} said or thought ›</span></button>` : ''}
-    <div class="list" style="font-size:13.5px;margin-top:-6px"><button class="row" data-go="songs"><span>Our songs</span><span class="l">${allSongs().length} ›</span></button><button class="row" data-go="map"><span>Our map</span><span class="l">${D.trips().length} trip${D.trips().length === 1 ? '' : 's'} ›</span></button><button class="row" data-go="lists"><span>Things to do together</span><span class="l">${D.listItems().filter(i => !i.done).length} ›</span></button></div>
+    <div class="list" style="font-size:13.5px;margin-top:-6px"><button class="row" data-go="songs"><span>Our songs</span><span class="l">${allSongs().length} ›</span></button><button class="row" data-go="map"><span>Our map</span><span class="l">${D.trips().length} trip${D.trips().length === 1 ? '' : 's'} ›</span></button><button class="row" data-go="lists"><span>Things to do together</span><span class="l">${D.listItems().filter(i => !i.done).length} ›</span></button><button class="row" data-act="importStart"><span>Import photos</span><span class="l">sorts them into days ›</span></button></div>
     ${!future ? `<div class="hr"></div><div class="l">All time</div><div class="stats" style="margin-top:-8px"><div><b>${all.trips}</b><span class="l">trip${all.trips===1?'':'s'}</span></div><div><b>${all.days}</b><span class="l">days</span></div><div><b>${all.moments}</b><span class="l">moments</span></div>${months != null ? `<div><b>${D.monthsSince(today())}</b><span class="l">months</span></div>` : ''}</div>` : ''}
   </div>${nav('memories')}`;
 }
@@ -1300,34 +1314,57 @@ function kmBetween(a, b){ const R = 6371, r = x => x * Math.PI / 180; const dLat
 async function thumbOf(file){ try { const img = await createImageBitmap(file); const s = 220 / Math.max(img.width, img.height); const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(img.width * Math.min(1, s))); c.height = Math.max(1, Math.round(img.height * Math.min(1, s))); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); if (img.close) img.close(); const b = await new Promise(r => c.toBlob(r, 'image/jpeg', .7)); return URL.createObjectURL(b); } catch (e) { return URL.createObjectURL(file); } }
 
 let imp = null;   // the import in progress; lives only on this phone until "Make memories"
-ACT.importStart = tripId => { const f = document.createElement('input'); f.type = 'file'; f.accept = 'image/*'; f.multiple = true; f.style.display = 'none'; document.body.appendChild(f); f.onchange = () => { const files = Array.from(f.files || []); f.remove(); if (files.length) importRead(tripId, files); }; f.click(); };
-async function importRead(tripId, files){
-  imp = { tripId, items: [], groups: [], stage: 'reading', done: 0, total: files.length }; go('import', { id: tripId });
-  const now = Date.now();
+// start an import from a trip (photos outside its dates start skipped) or from anywhere ('' = sorted by date into whatever trip matches)
+function pickImages(cb){ const f = document.createElement('input'); f.type = 'file'; f.accept = 'image/*'; f.multiple = true; f.style.display = 'none'; document.body.appendChild(f); f.onchange = () => { const files = Array.from(f.files || []); f.remove(); if (files.length) cb(files); }; f.click(); }
+ACT.importStart = tripId => { closeSheet(); pickImages(files => importRead(tripId || '', files)); };
+ACT.importMore = () => pickImages(files => importRead(imp.tripId, files, true));
+let impSeq = 0;
+async function importRead(tripId, files, more){
+  if (!more || !imp) imp = { tripId, key: tripId || 'any', items: [], groups: [], sel: [] };
+  imp.stage = 'reading'; imp.done = 0; imp.total = files.length; if (route.name !== 'import') go('import', { id: imp.key }); else render();
+  const now = Date.now(); const fresh = [];
   for (const [i, file] of files.entries()) {
     let ex = null; try { ex = readExif(await file.slice(0, 512 * 1024).arrayBuffer()); if (!ex && /hei[cf]/i.test(file.type + file.name) && file.size < 25e6) ex = readExif(await file.arrayBuffer()); } catch (e) {}
-    ex = ex || {}; let dt = ex.dt || '', guessed = false;
+    ex = ex || {}; let dt = ex.dt || '';
     // no EXIF time: fall back to the file's date, unless that's just "now" (the picker re-saved it)
-    if (!dt && file.lastModified && now - file.lastModified > 10 * 60000) { const d = new Date(file.lastModified); dt = isoDate(d) + 'T' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); guessed = true; }
+    if (!dt && file.lastModified && now - file.lastModified > 10 * 60000) { const d = new Date(file.lastModified); dt = isoDate(d) + 'T' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
     const screen = !ex.make && !ex.model && (/png/i.test(file.type) || /screenshot/i.test(file.name));
-    imp.items.push({ id: 'i' + i, file, dt, guessed, lat: ex.lat, lon: ex.lon, screen, hasExif: !!ex.dt, thumb: await thumbOf(file), out: false });
+    const it = { id: 'i' + (impSeq++), file, dt, lat: ex.lat, lon: ex.lon, screen, hasExif: !!ex.dt, thumb: await thumbOf(file), out: false }; imp.items.push(it); fresh.push(it);
     imp.done = i + 1; const pr = $('#imp-prog'); if (pr) pr.textContent = `Reading ${imp.done} of ${imp.total}…`;
   }
-  importGroup(); imp.stage = 'review'; if (route.name === 'import') render(); importPlaces();
+  if (more) importPlace(fresh); else imp.groups = buildGroups(fresh);
+  imp.stage = 'review'; if (route.name === 'import') render(); importPlaces();
 }
-function importGroup(){
-  const t = D.trip(imp.tripId); const its = imp.items; const groups = [];
-  const timed = its.filter(x => x.dt && !x.screen).sort((a, b) => a.dt.localeCompare(b.dt));
-  let g = null;
-  for (const x of timed) { const prev = g && g.items.length ? imp.items.find(y => y.id === g.items[g.items.length - 1]) : null;
+const impTrip = () => imp && imp.tripId ? D.trip(imp.tripId) : null;
+const byTime = (a, b) => (a.dt || '9999').localeCompare(b.dt || '9999');
+function newGroup(kind, date, items){ return { id: 'g' + (impSeq++), kind, date, items: items.map(x => x.id) }; }
+// group photos: by day, then a new moment after a 90-minute gap or a move of more than 1.5 km
+function buildGroups(items){
+  const t = impTrip(); const groups = []; let g = null, prev = null;
+  for (const x of items.filter(x => x.dt && !x.screen).sort(byTime)) {
     const far = prev && prev.lat != null && x.lat != null && kmBetween(prev, x) > 1.5;
-    if (!g || prev.dt.slice(0, 10) !== x.dt.slice(0, 10) || dtMs(x.dt) - dtMs(prev.dt) > 90 * 60000 || far) { g = { id: 'g' + groups.length, kind: 'time', items: [], date: x.dt.slice(0, 10) }; groups.push(g); }
-    g.items.push(x.id); }
-  const unknown = its.filter(x => !x.dt && !x.screen); if (unknown.length) groups.push({ id: 'gu', kind: 'unknown', items: unknown.map(x => x.id), date: t ? (today() >= t.start && today() <= t.end ? today() : t.start) : today() });
-  const screens = its.filter(x => x.screen); if (screens.length) groups.push({ id: 'gs', kind: 'screens', items: screens.map(x => x.id), date: screens[0].dt ? screens[0].dt.slice(0, 10) : (t ? t.start : today()), skip: true });
-  groups.forEach(g => { g.outside = !!(t && (g.date < t.start || g.date > t.end)) && g.kind === 'time'; if (g.outside) g.skip = true; importGuess(g); });
-  imp.groups = groups;
+    if (!g || prev.dt.slice(0, 10) !== x.dt.slice(0, 10) || dtMs(x.dt) - dtMs(prev.dt) > 90 * 60000 || far) { g = newGroup('time', x.dt.slice(0, 10), []); groups.push(g); }
+    g.items.push(x.id); prev = x; }
+  const unknown = items.filter(x => !x.dt && !x.screen); if (unknown.length) groups.push(newGroup('unknown', t ? (today() >= t.start && today() <= t.end ? today() : t.start) : today(), unknown));
+  const screens = items.filter(x => x.screen); if (screens.length) { const s = newGroup('screens', screens[0].dt ? screens[0].dt.slice(0, 10) : (t ? t.start : today()), screens); s.skip = true; groups.push(s); }
+  groups.forEach(g => { g.outside = !!(t && g.kind === 'time' && (g.date < t.start || g.date > t.end)); if (g.outside) g.skip = true; importGuess(g); });
+  return groups;
 }
+// "+ Add more": new photos join a moment they fit in (same day, within 90 minutes), the rest make new ones
+function importPlace(fresh){
+  const left = [];
+  for (const x of fresh) {
+    let home = null;
+    if (x.screen) home = imp.groups.find(g => g.kind === 'screens');
+    else if (!x.dt) home = imp.groups.find(g => g.kind === 'unknown');
+    else home = imp.groups.find(g => { if (g.kind !== 'time' || g.date !== x.dt.slice(0, 10)) return false; const sp = groupSpan(g); return sp && dtMs(x.dt) >= dtMs(sp.a) - 90 * 60000 && dtMs(x.dt) <= dtMs(sp.b) + 90 * 60000; });
+    if (home) { home.items.push(x.id); sortGroup(home); importGuess(home); } else left.push(x);
+  }
+  buildGroups(left).forEach(g => insertGroup(g));
+}
+function sortGroup(g){ g.items = groupItems(g).sort(byTime).map(x => x.id); }
+// keep moments in time order within a day
+function insertGroup(g){ const sp = groupSpan(g); let at = imp.groups.length; if (g.kind === 'time' && sp) { const i = imp.groups.findIndex(o => { const s2 = groupSpan(o); return o.kind !== 'time' || (o.date === g.date && s2 && s2.a > sp.a) || o.date > g.date; }); if (i >= 0) at = i; } imp.groups.splice(at, 0, g); }
 function groupItems(g){ return g.items.map(id => imp.items.find(x => x.id === id)).filter(Boolean); }
 function groupSpan(g){ const ts = groupItems(g).filter(x => x.dt).map(x => x.dt).sort(); return ts.length ? { a: ts[0], b: ts[ts.length - 1] } : null; }
 // a name for the group: a plan or booking at that time, else the time of day (+ the place, once known)
@@ -1345,54 +1382,72 @@ function importGuess(g){
 }
 function hm2(s){ const m = String(s || '').match(/(\d{1,2}):(\d{2})\s*([ap])?/i); if (!m) return null; let h = +m[1]; if (m[3]) { const pm = /p/i.test(m[3]); if (pm && h < 12) h += 12; if (!pm && h === 12) h = 0; } return h * 60 + +m[2]; }
 // look up a place name for each group that has a location (one request a second, as OpenStreetMap asks)
-async function importPlaces(){ const mine = imp; if (!mine) return;
-  for (const g of mine.groups) { if (imp !== mine || mine.stage !== 'review') return; const x = groupItems(g).find(y => y.lat != null); if (!x || g.place) continue;
+let placing = false;
+async function importPlaces(){ if (placing) return; placing = true; const mine = imp;
+  try { while (imp === mine && mine) { const g = mine.groups.find(g => !g.place && !g.noPlace && groupItems(g).some(y => y.lat != null)); if (!g || mine.stage !== 'review') break; const x = groupItems(g).find(y => y.lat != null);
     const p = await reverseGeo(x.lat, x.lon); g.place = { lat: x.lat, lon: x.lon, name: p ? p.name : '', area: p ? p.area : '' }; importGuess(g);
-    if (route.name === 'import' && !sheet && !(document.activeElement && document.activeElement.classList.contains('imptitle'))) render(); await new Promise(r => setTimeout(r, 1100)); } }
+    if (route.name === 'import' && !sheet && !(document.activeElement && document.activeElement.classList.contains('imptitle'))) render(); await new Promise(r => setTimeout(r, 1100)); } } finally { placing = false; } }
 function renderImport(app){
-  const t = D.trip(route.id);
-  if (!imp || imp.tripId !== route.id) { app.innerHTML = `<div class="screen"><div class="bar"><button data-go="${t ? 'trip/' + t.id : 'trips'}">‹ ${t ? esc(t.city) : 'Trips'}</button><span>Import</span></div><h1 class="hd">Import photos</h1><div class="sub" style="text-align:left">Pick a pile of photos from the trip. They're sorted into days and moments for you to check before anything is saved.</div>${t ? `<button class="btn block" data-act="importStart|${t.id}">Choose photos</button>` : ''}</div>${nav('trips')}`; return; }
+  const t = impTrip() || (route.id && route.id !== 'any' ? D.trip(route.id) : null); const back = t ? `trip/${t.id}` : 'home';
+  if (!imp || imp.key !== route.id) { app.innerHTML = `<div class="screen"><div class="bar"><button data-go="${back}">‹ ${t ? esc(t.city) : 'Home'}</button><span>Import</span></div><h1 class="hd">Import photos</h1><div class="sub" style="text-align:left">Pick a pile of photos. They're sorted into days and moments for you to check before anything is saved.</div><button class="btn block" data-act="importStart|${t ? t.id : ''}">Choose photos</button></div>${nav(t ? 'trips' : 'home')}`; return; }
   if (imp.stage === 'reading') { app.innerHTML = `<div class="screen"><div class="bar"><span></span><span>Import</span></div><h1 class="hd">Sorting your photos</h1><div class="glass"><div class="row"><span id="imp-prog">Reading ${imp.done} of ${imp.total}…</span><span class="spin"></span></div><div class="l" style="margin-top:6px">Nothing is saved yet. Keep the app open.</div></div></div>`; return; }
   if (imp.stage === 'saving') { app.innerHTML = `<div class="screen"><div class="bar"><span></span><span>Import</span></div><h1 class="hd">Making memories</h1><div class="glass"><div class="row"><span id="imp-prog">${imp.saved || 0} of ${imp.toSave || 0}…</span><span class="spin"></span></div><div class="l" style="margin-top:6px">Keep the app open — photos upload in the background after.</div></div></div>`; return; }
-  const its = imp.items; const withT = its.filter(x => x.hasExif).length, withL = its.filter(x => x.lat != null).length;
+  const its = imp.items; const withT = its.filter(x => x.hasExif).length, withL = its.filter(x => x.lat != null).length; const sel = imp.sel;
+  imp.groups = imp.groups.filter(g => g.items.length);
   const days = [...new Set(imp.groups.map(g => g.date))].sort(); const live = imp.groups.filter(g => !g.skip && groupItems(g).some(x => !x.out));
   const card = (g, i, list) => { const gi = groupItems(g); const sp = groupSpan(g); const n = gi.filter(x => !x.out).length; const nxt = list[i + 1];
-    return `<div class="glass impg ${g.skip ? 'skip' : ''}"><div class="row" style="gap:8px"><input class="in imptitle" data-act="impTitle|${g.id}" data-on="change" value="${esc(g.title || '')}" placeholder="${g.kind === 'unknown' ? 'What were these?' : 'Name this moment'}"><button class="chip ${g.skip ? '' : 'on'}" data-act="impSkip|${g.id}">${g.skip ? 'Skipped' : '✓ Keep'}</button></div>
-      <div class="l" style="margin-top:4px">${g.kind === 'unknown' ? 'No time on these · ' : g.kind === 'screens' ? 'Screenshots · ' : sp ? imgTime(sp.a) + (sp.b !== sp.a ? ' – ' + imgTime(sp.b) : '') + ' · ' : ''}${n} photo${n === 1 ? '' : 's'}${g.place && (g.place.name || g.place.area) ? ' · 📍 ' + esc(g.place.name || g.place.area) : ''}${g.from === 'plan' ? ' · from your plans' : ''}${g.outside ? ' · outside the trip dates' : ''}</div>
-      <div class="impstrip">${gi.map(x => `<button class="${x.out ? 'out' : ''}" data-act="impToggle|${x.id}"><img src="${x.thumb}" alt="">${x.dt && g.kind !== 'unknown' ? `<span>${imgTime(x.dt)}</span>` : ''}</button>`).join('')}</div>
-      <div class="row" style="margin-top:8px;gap:6px;justify-content:flex-start;flex-wrap:wrap">${g.kind === 'unknown' || g.kind === 'screens' ? `<input class="in" type="date" value="${g.date}" data-act="impDate|${g.id}" data-on="change" style="width:auto;padding:5px 8px;font-size:12px">` : ''}${gi.length > 1 && g.kind === 'time' ? `<button class="chip" data-act="impSplit|${g.id}">Split</button>` : ''}${nxt && nxt.kind === 'time' && g.kind === 'time' ? `<button class="chip" data-act="impMerge|${g.id}">Merge with next</button>` : ''}<span class="l" style="margin-left:auto">tap a photo to leave it out</span></div></div>`; };
+    if (g.skip) return `<button class="glass impg skip row" data-act="impSkip|${g.id}"><span class="itick"></span><span style="flex:1;text-align:left"><b style="font-weight:500">${esc(g.title || (g.kind === 'unknown' ? 'No time' : 'Moment'))}</b> <span class="l">· ${gi.length} photo${gi.length === 1 ? '' : 's'}${g.outside ? ' · outside the trip dates' : ''}</span></span><span class="l">Skipped · tap to include</span></button>`;
+    const meta = `${g.kind === 'unknown' ? 'No time on these · ' : g.kind === 'screens' ? 'Screenshots · ' : sp ? imgTime(sp.a) + (sp.b !== sp.a ? ' – ' + imgTime(sp.b) : '') + ' · ' : ''}${n} photo${n === 1 ? '' : 's'}${g.place && (g.place.name || g.place.area) ? ' · 📍 ' + esc(g.place.name || g.place.area) : ''}${g.from === 'plan' && !g.edited ? ' · from your plans' : ''}`;
+    const strip = gi.map((x, k) => `${k ? `<button class="cut" data-act="impCut|${g.id},${k}" aria-label="Split here">✂</button>` : ''}<button class="ph ${x.out ? 'out' : ''} ${sel.includes(x.id) ? 'sel' : ''}" data-act="impTap|${x.id}"><img src="${x.thumb}" alt="">${x.dt && g.kind !== 'unknown' ? `<span>${imgTime(x.dt)}</span>` : ''}</button>`).join('');
+    return `<div class="glass impg"><div class="row" style="gap:10px;align-items:flex-start"><button class="itick on" data-act="impSkip|${g.id}" aria-label="Skip this moment">✓</button><div style="flex:1;min-width:0"><input class="in imptitle" data-act="impTitle|${g.id}" data-on="change" value="${esc(g.title || '')}" placeholder="${g.kind === 'unknown' ? 'What were these?' : 'Name this moment'}"><div class="l" style="margin-top:4px">${meta}</div></div></div>
+      <div class="impstrip">${strip}</div>
+      <div class="row" style="margin-top:8px;gap:6px;justify-content:flex-start;flex-wrap:wrap">${g.kind !== 'time' ? `<input class="in" type="date" value="${g.date}" data-act="impDate|${g.id}" data-on="change" style="width:auto;padding:5px 8px;font-size:12px">` : ''}${nxt && nxt.kind === 'time' && g.kind === 'time' && !nxt.skip ? `<button class="chip" data-act="impMerge|${g.id}">Merge with next</button>` : ''}<span class="l" style="margin-left:auto">${gi.length > 1 ? '✂ splits · ' : ''}tap photos to move them</span></div></div>`; };
   app.innerHTML = `<div class="screen"><div class="bar"><button data-act="impCancel">Cancel</button><span>${its.length} photos</span></div><h1 class="hd">Check your moments</h1>
     <div class="glass deep" style="font-size:12.5px"><div class="row"><span>Time taken</span><span class="l">${withT} of ${its.length}</span></div><div class="row" style="margin-top:4px"><span>Location</span><span class="l">${withL} of ${its.length}</span></div>${!withL ? `<div class="l" style="margin-top:6px">Your phone didn't share locations, so places aren't guessed. Choosing photos through Files usually keeps them.</div>` : ''}${withT < its.length ? `<div class="l" style="margin-top:6px">Photos without a time are grouped at the end — pick their day there.</div>` : ''}</div>
-    ${days.map(d => { const list = imp.groups.filter(g => g.date === d && g.kind === 'time'); const extra = imp.groups.filter(g => g.date === d && g.kind !== 'time'); const all = list.concat(extra); return all.length ? `<div class="l">${fmtDow(d)} ${MON[parseDate(d).getMonth()]}${t && d >= t.start && d <= t.end ? ' · day ' + (daysBetween(t.start, d) + 1) : ''}</div>${all.map((g, i) => card(g, i, all)).join('')}` : ''; }).join('')}
-    <div class="impbar"><span class="l">${live.length} memor${live.length === 1 ? 'y' : 'ies'} · ${live.reduce((s, g) => s + groupItems(g).filter(x => !x.out).length, 0)} photos</span><button class="btn sm" data-act="impSave" ${live.length ? '' : 'disabled'}>Make memories</button></div>
-  </div>${nav('trips')}`;
+    <button class="btn lite block" data-act="importMore">+ Add more photos</button>
+    ${days.map(d => { const list = imp.groups.filter(g => g.date === d && g.kind === 'time'); const all = list.concat(imp.groups.filter(g => g.date === d && g.kind !== 'time')); return all.length ? `<div class="l">${fmtDow(d)} ${MON[parseDate(d).getMonth()]}${t && d >= t.start && d <= t.end ? ' · day ' + (daysBetween(t.start, d) + 1) : ''}${D.tripForDate(d) && (!t || D.tripForDate(d).id !== t.id) ? ' · ' + esc(D.tripForDate(d).city) : ''}</div>${all.map((g, i) => card(g, i, all)).join('')}` : ''; }).join('')}
+    ${sel.length ? `<div class="impbar selbar"><button class="l" style="white-space:nowrap" data-act="impSelClear">${sel.length} selected ✕</button><span style="display:flex;gap:6px;justify-content:flex-end"><button class="chip on" data-act="impSelNew">New moment</button><button class="chip" data-act="impSelMove">Move to…</button><button class="chip" data-act="impSelOut">Leave out</button></span></div>`
+      : `<div class="impbar"><span class="l">${live.length} memor${live.length === 1 ? 'y' : 'ies'} · ${live.reduce((s, g) => s + groupItems(g).filter(x => !x.out).length, 0)} photos</span><button class="btn sm" data-act="impSave" ${live.length ? '' : 'disabled'}>Make memories</button></div>`}
+  </div>${nav(t ? 'trips' : 'home')}`;
 }
 const impG = id => imp && imp.groups.find(g => g.id === id);
+const impGroupOf = id => imp.groups.find(g => g.items.includes(id));
 ACT.impTitle = (id, el) => { const g = impG(id); if (g) { g.title = el.value.trim(); g.edited = true; } };
 ACT.impSkip = id => { const g = impG(id); if (g) { g.skip = !g.skip; render(); } };
-ACT.impToggle = id => { const x = imp && imp.items.find(y => y.id === id); if (x) { x.out = !x.out; render(); } };
+// tap a photo: select it (a left-out photo comes back instead)
+ACT.impTap = id => { const x = imp && imp.items.find(y => y.id === id); if (!x) return; if (x.out) { x.out = false; return render(); } const i = imp.sel.indexOf(id); if (i >= 0) imp.sel.splice(i, 1); else imp.sel.push(id); render(); };
+ACT.impSelClear = () => { imp.sel = []; render(); };
+ACT.impSelOut = () => { imp.sel.forEach(id => { const x = imp.items.find(y => y.id === id); if (x) x.out = true; }); imp.sel = []; render(); };
+function takeSelected(){ const ids = imp.sel.slice(); imp.groups.forEach(g => { g.items = g.items.filter(id => !ids.includes(id)); }); imp.sel = []; return ids.map(id => imp.items.find(x => x.id === id)).filter(Boolean).sort(byTime); }
+ACT.impSelNew = () => { const from = impGroupOf(imp.sel[0]); const xs = takeSelected(); if (!xs.length) return; const timed = xs.some(x => x.dt); const g = newGroup(timed ? 'time' : 'unknown', timed ? xs.find(x => x.dt).dt.slice(0, 10) : (from ? from.date : today()), xs); const t = impTrip(); g.outside = !!(t && g.kind === 'time' && (g.date < t.start || g.date > t.end)); importGuess(g); insertGroup(g); imp.groups.forEach(o => { if (o !== g) importGuess(o); }); importPlaces(); render(); toast('New moment'); };
+ACT.impSelMove = () => { const mine = new Set(imp.sel.map(id => (impGroupOf(id) || {}).id)); const opts = imp.groups.filter(g => !(mine.size === 1 && mine.has(g.id)));
+  openSheet(`<div class="bar"><button data-act="closeSheet">Cancel</button><span>Move ${imp.sel.length} photo${imp.sel.length === 1 ? '' : 's'}</span></div><h2 class="hd md" style="margin:0">Move to…</h2><div class="list" style="font-size:13.5px">${opts.map(g => { const sp = groupSpan(g); return `<button class="row" data-act="impMoveTo|${g.id}"><span style="display:flex;gap:10px;align-items:center"><span class="th" style="width:40px;height:40px"><img src="${(groupItems(g)[0] || {}).thumb || ''}" alt=""></span><span style="text-align:left"><div style="font-weight:500">${esc(g.title || 'Moment')}</div><div class="l">${fmtDow(g.date)}${sp ? ' · ' + imgTime(sp.a) : ''} · ${g.items.length} photo${g.items.length === 1 ? '' : 's'}${g.skip ? ' · skipped' : ''}</div></span></span><span class="l">›</span></button>`; }).join('')}</div>`); };
+ACT.impMoveTo = gid => { const g = impG(gid); if (!g) return; const xs = takeSelected(); g.items = g.items.concat(xs.map(x => x.id)); sortGroup(g); imp.groups.forEach(importGuess); closeSheet(); render(); };
 ACT.impDate = (id, el) => { const g = impG(id); if (g && el.value) { g.date = el.value; render(); } };
-ACT.impMerge = id => { const i = imp.groups.findIndex(g => g.id === id); const g = imp.groups[i]; const list = imp.groups.filter(x => x.date === g.date && x.kind === 'time'); const nxt = list[list.indexOf(g) + 1]; if (!nxt) return; g.items = g.items.concat(nxt.items); if (!g.place && nxt.place) g.place = nxt.place; g.skip = g.skip && nxt.skip; imp.groups = imp.groups.filter(x => x !== nxt); importGuess(g); render(); };
-// split at the biggest gap in time
-ACT.impSplit = id => { const g = impG(id); const gi = groupItems(g); if (gi.length < 2) return; let at = 1, best = -1; for (let i = 1; i < gi.length; i++) { const gap = gi[i].dt && gi[i - 1].dt ? dtMs(gi[i].dt) - dtMs(gi[i - 1].dt) : 0; if (gap > best) { best = gap; at = i; } } if (best <= 0) at = Math.ceil(gi.length / 2);
-  const ng = { id: 'g' + Date.now().toString(36), kind: 'time', date: g.date, items: g.items.slice(at), place: g.place, outside: g.outside, skip: g.skip }; g.items = g.items.slice(0, at); g.edited = false; imp.groups.splice(imp.groups.indexOf(g) + 1, 0, ng); importGuess(g); importGuess(ng); render(); };
-ACT.impCancel = async () => { if (!await ask('Stop importing?', { sub: 'Nothing has been saved.', ok: 'Stop', no: 'Keep going' })) return; const id = imp && imp.tripId; imp.items.forEach(x => { try { URL.revokeObjectURL(x.thumb); } catch (e) {} }); imp = null; go('trip', { id }); };
+ACT.impMerge = id => { const g = impG(id); const list = imp.groups.filter(x => x.date === g.date && x.kind === 'time'); const nxt = list[list.indexOf(g) + 1]; if (!nxt) return; g.items = g.items.concat(nxt.items); sortGroup(g); if (!g.place && nxt.place) g.place = nxt.place; imp.groups = imp.groups.filter(x => x !== nxt); importGuess(g); render(); };
+// ✂ between two photos: split the moment exactly there
+ACT.impCut = arg => { const [id, k] = arg.split(','); const g = impG(id); if (!g || +k < 1 || +k >= g.items.length) return;
+  const ng = { id: 'g' + (impSeq++), kind: g.kind, date: g.date, items: g.items.slice(+k), place: g.place, outside: g.outside }; g.items = g.items.slice(0, +k); g.edited = false; imp.groups.splice(imp.groups.indexOf(g) + 1, 0, ng); importGuess(g); importGuess(ng); render(); };
+ACT.impCancel = async () => { if (!await ask('Stop importing?', { sub: 'Nothing has been saved.', ok: 'Stop', no: 'Keep going' })) return; const t = impTrip(); imp.items.forEach(x => { try { URL.revokeObjectURL(x.thumb); } catch (e) {} }); imp = null; if (t) go('trip', { id: t.id }); else go('home'); };
 ACT.impSave = async () => {
   const live = imp.groups.filter(g => !g.skip && groupItems(g).some(x => !x.out)); if (!live.length) return;
-  const me = D.me(); const t0 = D.trip(imp.tripId); const mine = imp; imp.stage = 'saving'; imp.saved = 0; imp.toSave = live.reduce((s, g) => s + groupItems(g).filter(x => !x.out).length, 0); render();
-  let made = 0;
+  const me = D.me(); const t0 = impTrip(); const mine = imp; imp.stage = 'saving'; imp.saved = 0; imp.toSave = live.reduce((s, g) => s + groupItems(g).filter(x => !x.out).length, 0); render();
+  let made = 0; const tripsUsed = new Set();
   for (const g of live) {
     const photos = [];
     for (const x of groupItems(g).filter(x => !x.out)) { const blob = await shrink(x.file); const asset = await Store.putBlob(blob, 'jpg'); photos.push({ asset, polaroid: false, stickers: [], taken: x.dt ? x.dt.slice(11, 16) : '' }); mine.saved++; const pr = $('#imp-prog'); if (pr) pr.textContent = `${mine.saved} of ${mine.toSave}…`; }
-    const sp = groupSpan(g); const trip = t0 && g.date >= t0.start && g.date <= t0.end ? t0 : D.tripForDate(g.date);
+    const sp = groupSpan(g); const trip = t0 && g.date >= t0.start && g.date <= t0.end ? t0 : D.tripForDate(g.date); if (trip) tripsUsed.add(trip.id);
     await Store.put('moments', { id: Store.uid(), tripId: trip ? trip.id : '', date: g.date, authorId: me.id, kind: 'moment', text: g.title || '', photos, items: [], time: sp && g.kind === 'time' ? sp.a.slice(11, 16) : '', place: g.place && g.place.lat != null ? g.place : null, imported: true, createdAt: sp && g.kind === 'time' ? dtMs(sp.a) : Date.now() + made, addedAt: Date.now() });
     made++;
   }
   // one note for the other phone ("Des added 42 photos from Toronto") instead of one per memory
-  await Store.put('imports', { id: Store.uid(), by: me.id, tripId: t0 ? t0.id : '', count: mine.saved, memories: made, at: Date.now() });
+  const tripId = t0 ? t0.id : tripsUsed.size === 1 ? [...tripsUsed][0] : '';
+  await Store.put('imports', { id: Store.uid(), by: me.id, tripId, count: mine.saved, memories: made, at: Date.now() });
   mine.items.forEach(x => { try { URL.revokeObjectURL(x.thumb); } catch (e) {} }); imp = null;
-  toast(made + ' memor' + (made === 1 ? 'y' : 'ies') + ' added'); go(t0 ? 'days' : 'memories', t0 ? { id: t0.id } : null);
+  toast(made + ' memor' + (made === 1 ? 'y' : 'ies') + ' added'); if (tripId) go('days', { id: tripId }); else go('memories');
 };
+// the + on Home: one memory, or a pile of photos
+ACT.homeAdd = () => openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Add</span></div><div class="list" style="font-size:13.5px"><button class="row" data-act="newMoment"><span style="text-align:left"><div style="font-weight:500;font-size:15px">New memory</div><div class="l">A message, photos, voice, song or cost</div></span><span class="l">›</span></button><button class="row" data-act="importStart"><span style="text-align:left"><div style="font-weight:500;font-size:15px">Import photos</div><div class="l">A pile of photos, sorted into days and moments</div></span><span class="l">›</span></button></div>`);
 
 // ---------- V2.9: export everything / restore ----------
 // One zip: every photo, voice note, chat photo and sticker in folders by date, readable text files,
@@ -1457,6 +1512,36 @@ ACT.importAll = () => { const f = document.createElement('input'); f.type = 'fil
       const n = await Store.importJSON(JSON.stringify(data.docs || [])); toast(`Restored ${n} record${n === 1 ? '' : 's'} and ${nb} file${nb === 1 ? '' : 's'}`);
     } else { const n = await Store.importJSON(await file.text()); toast(`Restored ${n} record${n === 1 ? '' : 's'}`); }
     render(); } catch (e) { toast('Couldn\'t restore: ' + e.message); } }; f.click(); };
+
+// ---------- What's new (shown once per phone after an update; Profile → What's new replays it) ----------
+const APP_VERSION = '2.10';
+let wnIdx = 0, wnForce = false;
+function needsWhatsNew(){ if (window.DJ_SKIP_WHATSNEW && !wnForce) return false; if (wnForce) return true; try { return localStorage.getItem('dj.seenVer') !== APP_VERSION; } catch (e) { return false; } }
+function markWhatsNewSeen(){ try { localStorage.setItem('dj.seenVer', APP_VERSION); } catch (e) {} }
+function whatsNewCards(){ const [a, b] = D.users2(); const o = D.other() || b || { name: 'them' }; const me = D.me() || a;
+  const msg = (u, inner, mine) => `<div class="msg ${mine ? 'me' : ''}"><i class="pal ${u.pal}"></i><div>${inner}</div></div>`;
+  return [
+    ['Chat, with photos', `Chat has its own typing box now. Send messages, 💭 thoughts, photos and stickers — photos stay, and you can save them to your phone. You can also send a photo from your pal on Home.`,
+      `<div class="mini" style="display:flex;flex-direction:column;gap:8px">${msg(o, `<div class="b">look where we ate 😭</div>`)}${msg(o, `<div class="cph" style="width:130px;height:96px;background:linear-gradient(135deg,#E9C9A8,#C98F7A)"></div>`)}${msg(me, `<div class="b">going back tomorrow</div>`, true)}<div class="composer" style="margin-top:4px"><span class="cbtn">◫</span><span class="cbtn">☺</span><span class="in" style="color:var(--mu);font-size:14px">say something</span><span class="btn sm">Send</span></div></div>`],
+    ['Your own stickers', `Make stickers out of your photos: in Photos, press and hold one of you until it lifts out, tap <b>Copy</b>, then <b>Paste</b> here. They're shared — use them on photos and in chat. Hold one to remove it.`,
+      `<div class="mini"><div class="tray" style="justify-content:center"><button><i class="pal bunny"></i></button><button><i class="pal puppy"></i></button><button><i class="tstk" style="background:radial-gradient(circle,#E0607E 55%,transparent 57%)"></i></button><button class="add">+</button></div><div class="l center" style="margin-top:10px">Copy in Photos → Paste</div></div>`],
+    ['Import a pile of photos', `Pick a whole trip's photos at once. They're sorted into days and moments by when they were taken, named from your plans (“Dinner at Alo”) or where you were. Check them — tick, rename, ✂ split, move photos — then Make memories. From any trip, the + on Home, a day, or Memories.`,
+      `<div class="mini"><div class="row" style="gap:10px;align-items:flex-start"><span class="itick on">✓</span><div style="flex:1"><div style="font-weight:500">Dinner at Alo</div><div class="l">7:20pm – 9:05pm · 6 photos · from your plans</div></div></div><div class="impstrip" style="margin-top:8px"><i class="ph" style="background:#C98F7A"></i><i class="cut">✂</i><i class="ph" style="background:#8E6A7E"></i><i class="cut">✂</i><i class="ph" style="background:#E9C9A8"></i></div></div>`],
+    ['Things to do together', `Lists for both of you: to cook, to do, places to go, to watch — or make your own. Give something a city and it shows up on that trip. Tick it off and make it a memory.`,
+      `<div class="mini"><div class="lcards" style="gap:8px"><div class="glass lcard" style="min-height:0"><span class="ic">🍳</span><b>To cook</b><span class="pv">dumplings from scratch</span></div><div class="glass lcard" style="min-height:0"><span class="ic">📍</span><b>Places to go</b><span class="pv">Toronto Island</span></div></div></div>`],
+    ['Our songs, our map, on this day', `In Memories: every song from every memory in one place, and a map of our homes, trips and the places in our photos. On Home, “On this day” brings back a memory from a month (or a year) ago today.`,
+      `<div class="mini"><div class="list" style="font-size:13px"><div class="row"><span>Our songs</span><span class="l">♫</span></div><div class="row"><span>Our map</span><span class="l">📍</span></div><div class="row"><span>On this day</span><span class="l">a month ago today</span></div></div></div>`],
+    ['And a few fixes', `A clear <b>+ Plan</b> (and a + on the calendar). Trips has a <b>Now</b> tab while you're on one. Voice notes can be an audio file. The app icon shows a number for unread messages. Profile → <b>Export everything</b> saves every photo and voice note in one zip.`,
+      `<div class="mini" style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center"><span class="chip">+ Plan</span><span class="chip on">Now</span><span class="chip">↑ Audio file</span><span class="chip">Export everything</span><span class="chip"><i class="dot"></i>2</span></div>`],
+  ]; }
+function renderWhatsNew(app){
+  const cards = whatsNewCards(); const i = Math.min(wnIdx, cards.length - 1); const [title, body, fig] = cards[i]; const last = i === cards.length - 1;
+  app.innerHTML = `<div class="screen tut wn"><div class="bar"><span>What's new · ${MONTHS[new Date().getMonth()]} update</span>${!last ? '<button data-act="wnDone">Skip</button>' : '<span></span>'}</div>${fig}<div style="margin-top:auto"><div class="hd md">${title}</div><p>${body}</p></div><div class="row" style="margin-top:14px"><div class="dots">${cards.map((_, j) => `<i class="${j === i ? 'on' : ''}"></i>`).join('')}</div><span style="display:flex;gap:6px">${i ? '<button class="btn sm lite" data-act="wnNav|-1">Back</button>' : ''}<button class="btn sm" data-act="${last ? 'wnDone' : 'wnNav|1'}">${last ? 'Got it' : 'Next'}</button></span></div></div>`;
+  let x0 = null; const el = app.querySelector('.wn'); el.addEventListener('touchstart', e => { x0 = e.touches[0].clientX; }, { passive: true }); el.addEventListener('touchend', e => { if (x0 == null) return; const dx = e.changedTouches[0].clientX - x0; x0 = null; if (Math.abs(dx) > 50) { const n = wnIdx + (dx < 0 ? 1 : -1); if (n >= 0 && n < cards.length) { wnIdx = n; render(); } } });
+}
+ACT.wnNav = d => { wnIdx = Math.max(0, wnIdx + +d); render(); };
+ACT.wnDone = () => { wnIdx = 0; wnForce = false; markWhatsNewSeen(); render(); window.scrollTo(0, 0); };
+ACT.whatsNew = () => { wnIdx = 0; wnForce = true; render(); window.scrollTo(0, 0); };
 
 // ---------- boot ----------
 window.addEventListener('hashchange', () => { const [n, id] = location.hash.slice(1).split('/'); if (n && n !== route.name || id !== route.id) { route = { name: n || 'home', id }; render(); } });

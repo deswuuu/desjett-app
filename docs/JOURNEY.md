@@ -112,3 +112,10 @@ Two evenings of feedback rounds on real screens produced V2:
 - Import photos (on a trip): pick a pile; each photo's own "taken at" time sorts it into days and into moments (a new one after a 90-minute gap or a move of 1.5 km). Names come from your plans at that time ("Dinner at Alo"), else time of day + the place if the photo has a location. Review: rename, keep/skip, split at the biggest gap, merge, leave single photos out; screenshots and photos outside the trip dates start skipped; photos with no time get a day picker. Nothing saves until "Make memories". The other phone gets one notification for the lot.
 - Export everything: one zip — photos by date and trip, voice notes, chat photos, stickers, booking files, Memories/Plans/Chat/Lists as text, a budget per trip, and backup.json. The other person's surprises are left out. Restore takes the zip (or an old .json) and never rolls back anything newer.
 - Tests: every earlier test still passes (the calendar ones with the clock set back to when they were written); new: 60+ checks across the features above, a two-phone sync run (chat photo, shared sticker, list tick), the notification function (25 checks).
+
+## V2.10 (Des's notes on V2.9)
+- Send a photo (or a sticker) from your pal on Home; the Home bubble shows a little thumbnail. It lands in Chat like any message.
+- Trips has a Now tab while you're on a trip (Happening now · Day 5 of 10, Today / Days / Budget, Import photos) and opens there; Upcoming is only trips that haven't started.
+- Import review: a round tick on each moment (✓ = becomes a memory; untick and it shrinks to "Skipped · tap to include"). Tap photos to select them → New moment / Move to… / Leave out. A ✂ between any two photos splits right there. "+ Add more photos" sorts new ones into the moments you already have (names and edits stay).
+- Import from anywhere: the + on Home (New memory / Import photos), a day page, Memories, a trip. Moments go to whichever trip matches their date.
+- What's new: after each big update, a few cards the first time each of you opens the app (skippable; Profile → What's new replays them). A brand-new phone gets How it works instead.

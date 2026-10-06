@@ -58,7 +58,8 @@ It opens full-screen with the icon, works offline for browsing, and new moments 
 | Stickers | The two pals plus your own, shared: Paste a cut-out from Photos (press and hold → Copy) or choose any picture. Hold one to remove it. On photos (day page) and in chat. |
 | Lists | Home → Things to do together: To cook, To do, Places to go, To watch, plus your own. Tick → make it a memory. Items with a city show on that trip. |
 | Songs, map, on this day | Memories → Our songs / Our map. On this day appears on Home when there's a memory from this date a month, months or a year ago. |
-| Import photos | On a trip: pick a pile of photos; they're sorted into days and moments by the time they were taken (and place, when the photo has it), named from your plans; check, then Make memories. |
+| What's new | After each big update, a few cards explain what changed (once per phone; Profile → What's new). |
+| Import photos | From a trip, the + on Home, a day, or Memories: pick a pile of photos; they're sorted into days and moments by the time they were taken (and place, when the photo has it), named from your plans; check, then Make memories. |
 | Backup | Profile → Export everything (one zip with every photo, voice note, text copies, budgets, and backup.json) → Restore a backup takes the zip back. |
 | Skies | Follows real sunrise and sunset for each city: morning (blue into peach), day, sunset (blush, orange low), night (violet dusk). The other pal stands in the glow of their time of day. Same city on trip days → one sky. |
 
