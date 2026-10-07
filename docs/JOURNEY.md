@@ -119,3 +119,13 @@ Two evenings of feedback rounds on real screens produced V2:
 - Import review: a round tick on each moment (✓ = becomes a memory; untick and it shrinks to "Skipped · tap to include"). Tap photos to select them → New moment / Move to… / Leave out. A ✂ between any two photos splits right there. "+ Add more photos" sorts new ones into the moments you already have (names and edits stay).
 - Import from anywhere: the + on Home (New memory / Import photos), a day page, Memories, a trip. Moments go to whichever trip matches their date.
 - What's new: after each big update, a few cards the first time each of you opens the app (skippable; Profile → What's new replays them). A brand-new phone gets How it works instead.
+
+## V2.11 (bookings, trips from bookings, photo walls)
+- Any booking, not just flights: movie tickets, concerts, restaurant reservations, trains, rentals. The reader looks for the labelled bits ("Movie:", "Date:", "Time:", "Total:", seats, reference) instead of guessing; "Total" beats the biggest number, the show date beats the email's sent date. A flight now needs a route between two airports or an airline word — your Landmark PDF had been read as a flight because of the tax number "RT0001".
+- The review sheet has type chips (Flight · Stay · Event · Food · Transport · Other) to fix a wrong guess. Events, reservations and transport become a plan on the calendar at their time, with the cost (Fun / Food / Transport) and the ticket attached; the plan sheet shows both.
+- "From a booking" on the calendar's +, Home's +, and Trips' + (which now asks Plan a trip / From a booking). From a booking on Trips makes the trip itself: the city where the first flight lands, first to last flight dates, who flies, flights and cost included.
+- Import: no more ✂ — select photos → New moment does it (and keeps moments in time order).
+- Day pages with more than 4 photos show 3 (featured first) + "See all N photos": a grid like Photos (grouped by moment) or a scroll with captions you can edit; tapping opens the full viewer. Each moment shows a small row of thumbnails (+N). ☆ Feature in the viewer keeps a photo on the wall.
+- Tap your pal: Say · Think · Photo (pick a few, caption, send).
+- What's new now remembers which cards you've seen: someone who saw October's first set only gets the 4 new ones.
+- YouTube videos: ▶ Video next to Song — paste a link (youtu.be, watch?v=, shorts, a timestamp) and it plays inside the memory.

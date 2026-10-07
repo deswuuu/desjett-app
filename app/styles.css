@@ -453,3 +453,19 @@ button,a,.tap{touch-action:manipulation}
 .bub .bimg+.bt{margin-top:0}
 .bub .bstk{width:40px;height:40px}
 .impbar.selbar{padding:8px 8px 8px 12px;gap:6px}.selbar .chip{padding:5px 9px}
+/* V2.11: day wall */
+.mthumbs{display:flex;gap:5px;margin-top:-6px;padding-left:28px}
+.mthumbs button{position:relative;width:54px;height:54px;border-radius:10px;overflow:hidden;background:var(--ph);border:1px solid var(--edge)}
+.mthumbs img{width:100%;height:100%;object-fit:cover;display:block}
+.mthumbs span{position:absolute;inset:0;background:rgba(0,0,0,.45);color:#fff;font-size:13px;font-weight:500;display:flex;align-items:center;justify-content:center}
+.pgrid button{position:relative}
+.fstar{position:absolute;top:4px;right:6px;color:#fff;font-style:normal;font-size:13px;text-shadow:0 1px 4px rgba(0,0,0,.5)}
+.wfeed{display:flex;flex-direction:column;gap:4px;margin-top:-4px}
+.wfeed button{position:relative;border-radius:18px;overflow:hidden;background:var(--ph);border:1px solid var(--edge)}
+.wfeed img{width:100%;display:block;max-height:70vh;object-fit:cover}
+.wfeed .vcap{background:transparent;border:0;border-bottom:1px solid var(--ln);border-radius:0;padding:6px 2px;font-size:14px}
+.wlabel{margin-top:4px}
+.wlabel .pal{width:14px;height:14px;vertical-align:-2px}
+.yt{position:relative;margin-top:10px;border-radius:14px;overflow:hidden;aspect-ratio:16/9;background:#000}
+.yt iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.attach button{min-width:0}

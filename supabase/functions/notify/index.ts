@@ -65,7 +65,7 @@ async function onChange(b) {
     const t = r.tripId ? await one(r.tripId) : null; if (isSecretTrip(t)) return { skipped: 'hidden' };
     const to = other(ctx, r.authorId); if (!to) return {};
     if (r.kind === 'plan') { if (r.hidden) return { skipped: 'hidden' }; await send(ctx, to.id, { title: name(ctx, r.authorId) + ' added a plan', body: (r.title || 'A plan') + ' · ' + fmtDow(r.date) + (r.time ? ' · ' + r.time : ''), url: dayUrl(r), tag: 'plan-' + r.id }, 'plans'); }
-    else if (r.kind === 'moment') { const ph = (r.photos || []).length, items = r.items || []; const bits = [ph ? plural(ph, 'photo') : '', items.filter(i => i.type === 'voice').length ? 'a voice note' : '', items.filter(i => i.type === 'song').length ? 'a song' : ''].filter(Boolean);
+    else if (r.kind === 'moment') { const ph = (r.photos || []).length, items = r.items || []; const bits = [ph ? plural(ph, 'photo') : '', items.filter(i => i.type === 'voice').length ? 'a voice note' : '', items.filter(i => i.type === 'song').length ? 'a song' : '', items.filter(i => i.type === 'video').length ? 'a video' : ''].filter(Boolean);
       await send(ctx, to.id, { title: name(ctx, r.authorId) + ' added a memory', body: [r.text, bits.join(' · ')].filter(Boolean).join(' · ') || (t ? t.city : fmtD(r.date)), url: dayUrl(r), tag: 'mem-' + r.id }, 'memories'); }
   }
   else if (c === 'comments' && op === 'INSERT' && recent(r.at)) {
