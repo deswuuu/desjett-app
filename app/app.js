@@ -56,6 +56,8 @@ const D = {
   costLines(m){ const out = []; if (m.cost && +m.cost.amount) out.push(Object.assign({}, m.cost, m.flight && (!m.cost.tag || m.cost.tag === 'fun' || m.cost.tag === 'other') ? { tag: 'flight' } : {}, { m, i: -1 })); (m.items||[]).forEach((it, i) => { if (it.type === 'cost' && +it.amount) out.push(Object.assign({}, it, { m, i })); }); return out; },
   costTotal(m){ return D.costLines(m).reduce((s,c) => s + +c.amount, 0); },
   voices(m){ const out = []; if (m.voice) out.push({ asset: m.voice, dur: m.voiceDur, by: m.authorId, legacy: true }); (m.items||[]).forEach(it => { if (it.type === 'voice' && it.asset) out.push(Object.assign({ by: m.authorId }, it)); }); return out; },
+  notes(mid){ return Store.all('notes').filter(n => n.mid === mid).sort((a, b) => (a.by < b.by ? -1 : 1)); },
+  note(mid, uid){ return Store.get('notes', 'note_' + mid + '_' + uid); },
   videos(m){ return (m.items||[]).filter(it => it.type === 'video' && it.url); },
   songs(m){ const out = []; if (m.song) out.push({ url: m.song, title: m.songTitle, artist: m.songBy, legacy: true }); (m.items||[]).forEach(it => { if (it.type === 'song' && it.url) out.push(it); }); return out; },
   shareOf(c, uid){ if (!c || !+c.amount) return 0; if (c.paidBy !== 'both') return c.paidBy === uid ? +c.amount : 0; const sp = c.split || {}; if (sp.mode === 'amt') return sp[uid] != null ? +sp[uid] : +c.amount / 2; return +c.amount * ((sp[uid] != null ? +sp[uid] : 50) / 100); },
@@ -148,8 +150,25 @@ function bind(root){
   root.querySelectorAll('[data-go]').forEach(el => el.onclick = e => { e.preventDefault(); const [n, id] = el.dataset.go.split('/'); go(n, id ? { id } : null); });
   root.querySelectorAll('[data-act]').forEach(el => { const ev = el.dataset.on || 'click'; el['on' + ev] = e => { const [n, arg] = el.dataset.act.split('|'); if (!ACT[n]) return; if (ev === 'click' && el._busy) return; const r = ACT[n](arg, el, e); if (ev === 'click' && r && typeof r.then === 'function') { el._busy = true; el.classList.add('busy'); r.catch(err => { console.error(err); toast('Something went wrong: ' + (err && err.message || err)); }).finally(() => { el._busy = false; el.classList.remove('busy'); }); } }; });
   root.querySelectorAll('[data-view]').forEach(el => el.addEventListener('click', e => { if (pendingSticker || e.target.classList.contains('stk') || el._dragged) return; ACT.viewPh(el.dataset.view); }));
-  root.querySelectorAll('[data-asset]').forEach(async el => { const u = await Store.blobUrl(el.dataset.asset); if (u) { if (el.tagName === 'IMG') el.src = u; else el.style.backgroundImage = `url(${u})`; } });
+  // full photos load now (and retry if the other phone hasn't finished uploading); previews load as they scroll into view
+  root.querySelectorAll('[data-asset]').forEach(el => loadImg(el, () => Store.blobUrl(el.dataset.asset), 0, true));
+  root.querySelectorAll('[data-thumb]').forEach(el => { if (imgIO) imgIO.observe(el); else loadImg(el, () => previewUrl(el.dataset.thumb, el.dataset.pv)); });
 }
+const imgQ = []; let imgActive = 0;
+function runImg(){ while (imgActive < 4 && imgQ.length) { const job = imgQ.shift(); if (!job.el.isConnected) continue; imgActive++; job.fn().catch(() => {}).finally(() => { imgActive--; runImg(); }); } }
+function setImg(el, u){ if (el.tagName === 'IMG') el.src = u; else el.style.backgroundImage = `url(${u})`; el.classList.add('loaded'); }
+const RETRY = [2000, 6000, 15000, 40000, 90000];
+function loadImg(el, get, tries, now){ const job = { el, fn: async () => { const u = await get().catch(() => null); if (u) setImg(el, u); else if ((tries || 0) < RETRY.length) setTimeout(() => { if (el.isConnected) loadImg(el, get, (tries || 0) + 1, now); }, RETRY[tries || 0]); } };
+  if (now) { job.fn().catch(() => {}); return; } imgQ.push(job); runImg(); }
+const imgIO = typeof IntersectionObserver !== 'undefined' ? new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { imgIO.unobserve(e.target); loadImg(e.target, () => previewUrl(e.target.dataset.thumb, e.target.dataset.pv)); } }), { rootMargin: '500px' }) : null;
+const pvCache = new Map();
+// a small preview: the one saved with the photo, or one made here once (older photos) and kept on this phone
+async function previewUrl(asset, thumb){ if (!asset) return null; if (pvCache.has(asset)) return pvCache.get(asset);
+  let u = thumb ? await Store.blobUrl(thumb) : null;
+  if (!u) { const k = 'pv_' + asset; const local = await Store.localBlob(k); if (local) u = URL.createObjectURL(local);
+    else { const full = await Store.blob(asset); if (!full) return null; try { const img = await decodeImage(full); const pv = await toJpeg(scaleTo(img, img.naturalWidth, img.naturalHeight, 480), .8); Store.putLocalBlob(k, pv); u = URL.createObjectURL(pv); } catch (e) { u = await Store.blobUrl(asset); } } }
+  if (u) pvCache.set(asset, u); return u; }
+const pvAttr = p => `data-thumb="${p.asset}" data-pv="${p.thumb || ''}"`;
 function palOf(id){ const u = D.user(id); return u ? `<i class="pal ${u.pal}" title="${esc(u.name)}"></i>` : ''; }
 function nav(on){ return `<nav class="nav">${[['home','Home'],['trips','Trips'],['calendar','Calendar'],['memories','Memories']].map(([k,l]) => `<button class="${on===k?'on':''}" data-go="${k}">${l}</button>`).join('')}</nav>`; }
 
@@ -233,7 +252,7 @@ function renderHome(app){
   const anni = D.isMonthiversary(today()), months = D.monthsSince(today());
   const gap = days == null ? 0 : Math.max(0, Math.min(1, days / 60)); const travel = Math.max(0, (Math.min(480, window.innerWidth) - 52 - 220) / 2); const px = (anni || sameCity) ? Math.round(travel + 6) : Math.round((1 - gap) * travel - 4);
   // long bubbles stop at the middle and show two lines, then "…" (the whole thing is in Chat)
-  const bub = (b, side) => b ? `<button class="bub ${b.kind} ${side}" data-go="chat" style="${side==='r'?'right:'+(6+px):'left:'+(6+px)}px;top:${b.kind==='think'?0:6}px;max-width:min(150px, calc(50% - ${14+px}px))">${b.photo ? `<span class="bph"><span class="bimg"><img data-asset="${b.photo}" alt=""></span>${b.auto ? '' : `<span class="bt">${esc(b.text)}</span>`}</span>` : b.sticker ? stkHTML(b.sticker, 'bstk') : `<span class="bt">${esc(b.text)}</span>`}</button>` : '';
+  const bub = (b, side) => b ? `<button class="bub ${b.kind} ${side}" data-go="chat" style="${side==='r'?'right:'+(6+px):'left:'+(6+px)}px;top:${b.kind==='think'?0:6}px;max-width:min(150px, calc(50% - ${14+px}px))">${b.photo ? `<span class="bph"><span class="bimg"><img data-thumb="${b.photo}" data-pv="${b.thumb || ''}" alt=""></span>${b.auto ? '' : `<span class="bt">${esc(b.text)}</span>`}</span>` : b.sticker ? stkHTML(b.sticker, 'bstk') : `<span class="bt">${esc(b.text)}</span>`}</button>` : '';
   const flightDay = t && today() === t.start && D.tripMoments(t.id).find(m => m.flight);
   const cost = t ? D.tripCost(t) : null, plan = t ? D.planTotal(t) : 0;
   const lastTrip = !t ? D.trips().filter(x => x.end < today()).slice(-1)[0] || null : null;
@@ -274,7 +293,7 @@ function renderHome(app){
 }
 function momentRow(m){
   const ph = m.photos && m.photos[0];
-  return `<button class="mo" data-go="day/${m.tripId ? m.tripId + '_' + m.date : 'none_' + m.date}"><div class="th">${ph ? `<img data-asset="${ph.asset}" alt="">` : ''}</div><div><div class="t">${esc(m.text || m.title || (D.voices(m).length ? 'Voice note' : D.songs(m).length ? (D.songs(m)[0].title || 'A song') : D.videos(m).length ? (D.videos(m)[0].title || 'A video') : (m.photos||[]).length ? 'Photo' : D.costLines(m).length ? (D.costLines(m)[0].label || 'A cost') : 'Memory'))}</div><div class="m l">${fmtD(m.date)}${m.tripId && D.trip(m.tripId) ? ' · ' + esc(D.trip(m.tripId).city) : ''} · ${palOf(m.authorId)}${D.costTotal(m) ? ' ' + money(D.costTotal(m)) : ''}${D.voices(m).length ? ' ' + D.voices(m).map(v => fmtDur(v.dur)).join(' · ') : ''}</div></div></button>`;
+  return `<button class="mo" data-go="day/${m.tripId ? m.tripId + '_' + m.date : 'none_' + m.date}"><div class="th">${ph ? `<img ${pvAttr(ph)} alt="">` : ''}</div><div><div class="t">${esc(m.text || m.title || (D.voices(m).length ? 'Voice note' : D.songs(m).length ? (D.songs(m)[0].title || 'A song') : D.videos(m).length ? (D.videos(m)[0].title || 'A video') : (m.photos||[]).length ? 'Photo' : D.costLines(m).length ? (D.costLines(m)[0].label || 'A cost') : 'Memory'))}</div><div class="m l">${fmtD(m.date)}${m.tripId && D.trip(m.tripId) ? ' · ' + esc(D.trip(m.tripId).city) : ''} · ${palOf(m.authorId)}${D.costTotal(m) ? ' ' + money(D.costTotal(m)) : ''}${D.voices(m).length ? ' ' + D.voices(m).map(v => fmtDur(v.dur)).join(' · ') : ''}</div></div></button>`;
 }
 const ordinal = n => n + (n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th');
 const fmtDur = s => s ? Math.floor(s/60) + ':' + String(Math.round(s%60)).padStart(2,'0') : '';
@@ -309,7 +328,7 @@ ACT.bubble = uid => {
   ACT.bubFiles = (a, el) => { keepCap(); Array.from(el.files || []).forEach(f => pending.push({ file: f, url: URL.createObjectURL(f) })); kind = 'photo'; openSheet(draw()); };
   ACT.bubRmPh = i => { keepCap(); pending.splice(+i, 1); openSheet(draw()); };
   ACT.bubSendPh = async () => { keepCap(); if (!pending.length) return; const text = caption.trim(); toast(pending.length === 1 ? 'Sending…' : 'Sending ' + pending.length + ' photos…');
-    for (const [i, p] of pending.entries()) { const blob = await shrink(p.file); const asset = await Store.putBlob(blob, 'jpg'); await Store.put('bubbles', { id: Store.uid(), userId: me.id, kind: 'say', photo: asset, text: i === 0 && text ? text : '📷 Photo', auto: !(i === 0 && text), at: Date.now() + i }); }
+    for (const [i, p] of pending.entries()) { const ph = await storePhoto(p.file); await Store.put('bubbles', { id: Store.uid(), userId: me.id, kind: 'say', photo: ph.asset, thumb: ph.thumb, text: i === 0 && text ? text : '📷 Photo', auto: !(i === 0 && text), at: Date.now() + i }); }
     pending = []; closeSheet(); render(); toast('Sent'); };
   ACT.bubSend = async () => { const text = $('#bub-text').value.trim(); if (!text) return; await Store.put('bubbles', { id: Store.uid(), userId: me.id, kind, text, at: Date.now() }); closeSheet(); render(); };
   openSheet(draw(), () => $('#bub-text').focus());
@@ -370,18 +389,41 @@ ACT.saveTrip = async mode => {
 function renderTrip(app){
   const t = D.trip(route.id); if (!t) return go('trips');
   const ms = D.tripMoments(t.id), c = D.tripCost(t), p = D.planTotal(t);
-  const photos = ms.flatMap(m => (m.photos||[]).map(ph => Object.assign({ m }, ph)));
+  const nPhotos = ms.reduce((s, m) => s + (m.photos||[]).length, 0), mm = ms.filter(m => m.kind === 'moment');
   const nDays = daysBetween(t.start, t.end) + 1, dayN = daysBetween(t.start, today()) + 1;
   const stage = today() < t.start ? `${daysBetween(today(), t.start)} days away` : today() > t.end ? 'Done' : `Day ${dayN} of ${nDays}`;
-  const meals = ms.filter(m => D.costLines(m).some(c => c.tag === 'food')).length, mm = ms.filter(m => m.kind !== 'booking');
-  const todayPlan = ms.find(m => m.kind === 'plan' && m.date === today());
-  const style = D.settings().photoStyle;
-  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="trips">‹ Trips</button><span>${stage}</span></div><h1 class="hd">${esc(t.city)}</h1>
-    ${style === 'polaroid' ? `<div class="polas">${photos.slice(0,2).map(ph => polaroid(D.moments().find(x => x.id === ph.m.id).photos.find(p => p.asset === ph.asset), ph.m, false, 'trip:' + t.id)).join('')}<button class="pola empty" data-act="newMoment|${t.id}"><div class="ph">+</div></button></div>` : `<div class="clean">${photos.slice(0,3).map(ph => `<button class="ph" data-act="viewPh|trip:${t.id},${ph.m.id},${ph.m.photos.findIndex(p => p.asset === ph.asset)}"><img data-asset="${ph.asset}" alt=""></button>`).join('')}<button class="ph" style="display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:300;color:var(--mu)" data-act="newMoment|${t.id}">+</button></div>`}
-    <div class="stats"><div><b>${Math.min(nDays, Math.max(0, today() > t.end ? nDays : dayN))}</b><span class="l">days</span></div><div><b>${meals}</b><span class="l">meals</span></div><div><b>${mm.length}</b><span class="l">moments</span></div></div>
-    <div class="tiles"><button data-go="days/${t.id}"><b>Days</b><span>${todayPlan ? esc(todayPlan.title||todayPlan.text) : nDays + ' days'}</span></button><button data-go="budget/${t.id}"><b>Budget</b><span>${money(c.total)} of ~${money(p)}</span></button><button data-go="photos/${t.id}"><b>Photos</b><span>${photos.length}</span></button></div>
-    <div class="list" style="font-size:13.5px;margin-top:-4px"><button class="row" data-act="importStart|${t.id}"><span>Import photos</span><span class="l">sorts them into days ›</span></button>${(() => { const n = D.listItems().filter(i => !i.done && i.city && cityKey(i.city) === cityKey(t.city)).length; return n ? `<button class="row" data-go="list/city~${encodeURIComponent(t.city)}"><span>On your list for ${esc(t.city)}</span><span class="l">${n} ›</span></button>` : ''; })()}<button class="row" data-go="moments/${t.id}"><span>All moments</span><span class="l">${mm.length} ›</span></button><button class="row" data-go="emails/${t.id}"><span>Add a booking from an email</span><span class="l">›</span></button><button class="row" data-act="exportTrip|${t.id}"><span>Export</span><span class="l">›</span></button><button class="row" data-act="editTrip|${t.id}"><span>Edit trip</span><span class="l">›</span></button></div>
+  if (tlAsc == null || tlFor !== t.id) { tlFor = t.id; tlAsc = today() < t.start; }
+  const listN = D.listItems().filter(i => !i.done && i.city && cityKey(i.city) === cityKey(t.city)).length;
+  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="trips">‹ Trips</button><span>${stage}</span></div><h1 class="hd">${esc(t.city)}</h1><div class="sub" style="margin-top:-6px;text-align:left">${fmtD(t.start)} – ${fmtD(t.end)} · ${mm.length} memor${mm.length === 1 ? 'y' : 'ies'} · ${nPhotos} photo${nPhotos === 1 ? '' : 's'}</div>
+    <div class="tiles tchips"><button data-go="budget/${t.id}"><b>Budget</b><span>${money(c.total)} of ~${money(p)}</span></button><button data-go="photos/${t.id}"><b>Photos</b><span>${nPhotos}</span></button><button data-go="days/${t.id}"><b>Days</b><span>${nDays} days</span></button><button data-act="importStart|${t.id}"><b>Import</b><span>photos</span></button></div>
+    <div class="secthd"><span class="hd md">Our days</span><span style="display:flex;gap:10px;align-items:center"><button class="l" data-act="tlOrder">${tlAsc ? 'first day first' : 'newest first'} ⇅</button><button class="plus" style="width:30px;height:30px;font-size:19px" data-act="newMoment|${t.id}" aria-label="Add a memory">+</button></span></div>
+    ${timelineHTML(t, tlAsc, false)}
+    <div class="list" style="font-size:13.5px">${listN ? `<button class="row" data-go="list/city~${encodeURIComponent(t.city)}"><span>On your list for ${esc(t.city)}</span><span class="l">${listN} ›</span></button>` : ''}<button class="row" data-go="emails/${t.id}"><span>Add a booking from an email</span><span class="l">›</span></button><button class="row" data-act="exportTrip|${t.id}"><span>Export</span><span class="l">›</span></button><button class="row" data-act="editTrip|${t.id}"><span>Edit trip</span><span class="l">›</span></button></div>
   </div>${nav('trips')}`;
+}
+let tlAsc = null, tlFor = null;
+ACT.tlOrder = () => { tlAsc = !tlAsc; render(); };
+// the trip as a timeline: each day's date on the left, its memories (with a strip of photos), flights and plans on the right
+function timelineHTML(t, asc, all){
+  const ms = D.tripMoments(t.id); const n = daysBetween(t.start, t.end); const td = today(); let out = '';
+  const idx = Array.from({ length: n + 1 }, (_, i) => i); if (!asc) idx.reverse();
+  for (const i of idx) { const d = addDays(t.start, i); const dm = ms.filter(m => m.date === d); const dn = parseDate(d);
+    const items = dm.map(m => {
+      if (m.flight) return `<button class="tm" data-go="day/${t.id}_${d}"><div class="t">${palOf(m.flight.who || m.authorId)}${esc(flightLabel(m))} ✈</div><div class="m">${esc(m.flight.no || '')} · ${esc(m.flight.from || '')} → ${esc(m.flight.to || '')}</div></button>`;
+      if (m.kind === 'plan') return `<button class="tplan" data-go="day/${t.id}_${d}">${esc(m.title || m.text)}${m.time ? ' · ' + hhmm(m.time) : ''} · ${d < td ? 'plan' : 'planned'}</button>`;
+      if (m.kind === 'booking') return `<button class="tplan" data-go="day/${t.id}_${d}">${esc(m.text || 'Booking')}${D.costTotal(m) ? ' · ' + money(D.costTotal(m)) : ''}</button>`;
+      const ph = m.photos || []; const title = m.text || (D.songs(m)[0] || {}).title || (D.videos(m)[0] || {}).title || (D.voices(m).length ? 'Voice note' : ph.length ? 'Photos' : 'Memory');
+      const meta = [m.time ? hhmm(m.time) : '', m.place && (m.place.name || m.place.area) ? '📍 ' + esc(m.place.name || m.place.area) : '', D.costTotal(m) ? money(D.costTotal(m)) : '', D.notes(m.id).length ? '✎ ' + D.notes(m.id).length : ''].filter(Boolean).join(' · ');
+      const strip = ph.length ? `<div class="strip">${ph.slice(0, 4).map((p, j) => `<i ${pvAttr(p)}></i>`).join('')}${ph.length > 4 ? `<i class="more" data-n="+${ph.length - 4}" ${pvAttr(ph[4])}></i>` : ''}</div>` : '';
+      return `<button class="tm" data-go="day/${t.id}_${d}"><div class="t">${palOf(m.authorId)}${esc(title)}</div>${meta ? `<div class="m">${meta}</div>` : ''}${strip}</button>`; });
+    const isToday = d === td;
+    if (!items.length) { if (!all && d > td) continue; out += `<div class="tday empty ${isToday ? 'today' : ''}"><button class="dn" data-go="day/${t.id}_${d}"><b>${dn.getDate()}</b><span>${DOW[dn.getDay()]}</span></button><div class="ms"><span>${isToday ? 'today · nothing yet' : 'nothing yet'}</span><button class="l" data-act="newMoment|${t.id},${d}">+ add</button></div></div>`; continue; }
+    out += `<div class="tday ${isToday ? 'today' : ''}"><button class="dn" data-go="day/${t.id}_${d}"><b>${dn.getDate()}</b><span>${DOW[dn.getDay()]}</span></button><div class="ms">${items.join('')}</div></div>`; }
+  return `<div class="tl days">${out || '<div class="empty">Nothing yet — tap + to add the first memory.</div>'}</div>`;
+}
+function renderDays(app){
+  const t = D.trip(route.id); if (!t) return go('trips'); const c = D.tripCost(t);
+  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="trip/${t.id}">‹ ${esc(t.city)}</button><span>${fmtD(t.start)} – ${fmtD(t.end)}</span></div><h1 class="hd">Days</h1>${timelineHTML(t, true, true)}<div class="glass row mt-auto"><span class="l">So far</span><span class="num" style="font-size:20px">${money(c.total)}</span></div></div>${nav('trips')}`;
 }
 ACT.editTrip = id => { const t = D.trip(id); const users = D.users(); openSheet(`<div class="bar"><button data-act="closeSheet">Cancel</button><span>Edit</span></div><input class="in big" id="t-city" value="${esc(t.city)}"><div class="row"><input class="in" type="date" id="t-start" value="${t.start}"><input class="in" type="date" id="t-end" value="${t.end}"></div><div class="seg">${users.map(u => `<button class="${u.id===t.flyer?'on':''}" data-act="segPick|tFlyer,${u.id}">${esc(u.name)}</button>`).join('')}</div><div class="row"><button class="btn lite" data-act="deleteTrip|${id}">Delete trip</button><button class="btn" data-act="updateTrip|${id}">Save</button></div>`, sh => sh.dataset['tFlyer'] = t.flyer || ''); };
 ACT.updateTrip = async id => { const t = D.trip(id); Object.assign(t, { city: $('#t-city').value.trim(), start: $('#t-start').value, end: $('#t-end').value, flyer: sheet.sh.dataset['tFlyer'] }); await Store.put('trips', t); closeSheet(); render(); };
@@ -406,13 +448,6 @@ function flightInfo(m){
   return { kind, out: kind === 'lands', who, time, text };
 }
 function flightLabel(m){ const f = flightInfo(m); return `${f.text} ${f.time}`.trim(); }
-function renderDays(app){
-  const t = D.trip(route.id); const ms = D.tripMoments(t.id); const n = daysBetween(t.start, t.end); 
-  let rows = '';
-  for (let i = 0; i <= n; i++) { const d = addDays(t.start, i); const dm = ms.filter(m => m.date === d); const plan = dm.find(m => m.kind === 'plan'), fls = dm.filter(m => m.flight), fl = fls.find(x => flightInfo(x).kind !== 'flies') || fls[0]; const title = plan ? (plan.title||plan.text) : fl ? flightLabel(fl) : dm.find(m => m.text) ? dm.find(m => m.text).text : ''; const others = dm.filter(m => m.kind !== 'booking').length; rows += `<button class="day" data-go="day/${t.id}_${d}"><div class="d">${parseDate(d).getDate()}</div><div class="w ${title?'':'open'}">${title ? esc(title) : 'Open'}${others ? `<span>${others} moment${others>1?'s':''}</span>` : plan && plan.note ? `<span>${esc(plan.note)}</span>` : ''}</div></button>`; }
-  const c = D.tripCost(t);
-  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="trip/${t.id}">‹ ${esc(t.city)}</button><span>${fmtD(t.start)} – ${fmtD(t.end)}</span></div><h1 class="hd">Days</h1><div class="days">${rows}</div><div class="glass row mt-auto"><span class="l">So far</span><span class="num" style="font-size:20px">${money(c.total)}</span></div></div>${nav('trips')}`;
-}
 function renderBudget(app){
   const t = D.trip(route.id); if (!t) return go('trips'); const c = D.tripCost(t), plan = D.tripPlan(t), P = D.planTotal(t); const [a, b] = D.users2(); const cats = D.cats(t); const occ = !!t.occasion;
   const bdayFor = occ && t.kind === 'birthday' ? D.user(t.forUser) : null; const myPresent = bdayFor && Store.all('presents').find(p => p.fromUser === D.me().id && p.forUser === bdayFor.id && p.date === t.bday);
@@ -464,7 +499,7 @@ ACT.planCfgEdit = async arg => { const [id, k] = arg.split(','); const t = D.tri
 function renderPhotos(app){
   const t = D.trip(route.id); const ms = D.tripMoments(t.id).filter(m => m.photos && m.photos.length); const byDay = {}; ms.forEach(m => (byDay[m.date] = byDay[m.date] || []).push(...m.photos.map(p => ({ p, m }))));
   const days = Object.keys(byDay).sort().reverse();
-  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="trip/${t.id}">‹ ${esc(t.city)}</button><span>${fmtD(t.start)} – ${fmtD(t.end)}</span></div><h1 class="hd">Photos</h1>${days.length ? days.map(d => `<div class="l">${fmtD(d)}</div><div class="pgrid" style="margin-top:-8px">${byDay[d].map(({p, m}) => `<button data-act="viewPh|trip:${t.id},${m.id},${m.photos.indexOf(p)}"><img data-asset="${p.asset}" alt=""></button>`).join('')}</div>`).join('') : '<div class="empty">No photos yet.</div>'}</div>${nav('trips')}`;
+  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="trip/${t.id}">‹ ${esc(t.city)}</button><span>${fmtD(t.start)} – ${fmtD(t.end)}</span></div><h1 class="hd">Photos</h1>${days.length ? days.map(d => `<div class="l">${fmtD(d)}</div><div class="pgrid" style="margin-top:-8px">${byDay[d].map(({p, m}) => `<button data-act="viewPh|trip:${t.id},${m.id},${m.photos.indexOf(p)}"><img ${pvAttr(p)} alt=""></button>`).join('')}</div>`).join('') : '<div class="empty">No photos yet.</div>'}</div>${nav('trips')}`;
 }
 function renderMoments(app){ const t = D.trip(route.id); const ms = D.tripMoments(t.id).filter(m => m.kind !== 'booking').reverse(); app.innerHTML = `<div class="screen"><div class="bar"><button data-go="trip/${t.id}">‹ ${esc(t.city)}</button><span>${ms.length} moments</span></div><h1 class="hd">Moments</h1><div class="feed">${ms.map(momentRow).join('') || '<div class="empty">Nothing yet.</div>'}</div></div>${nav('trips')}`; }
 
@@ -485,7 +520,7 @@ function renderDay(app){
   const other23 = anni ? D.moments().filter(m => D.isMonthiversary(m.date) && m.date !== date && m.photos && m.photos.length).sort((a,b) => b.date.localeCompare(a.date)).slice(0,5) : [];
   app.innerHTML = `<div class="screen"><div class="bar"><button data-go="${t ? (t.occasion ? 'budget/' : 'days/') + t.id : 'calendar'}">‹ ${t ? esc(t.city) : 'Calendar'}</button><span>${fmtDow(date)}</span></div><h1 class="hd" style="font-size:34px">${bds.length && !plan ? bds.map(u => u.id === D.me().id ? 'Your birthday' : esc(u.name) + '\'s birthday').join(' & ') : anni ? `${months} month${months===1?'':'s'} <i class="heart lg"></i>` : plan ? esc(plan.title||plan.text) + (plan.who && plan.who !== 'both' ? ' ' + palOf(plan.who) : '') : fmtD(date)}</h1>${anni ? `<div class="sub" style="margin-top:-6px">since ${fmtD(D.anniversary())}${plan ? ' · ' + esc(plan.title||plan.text) : ''}</div>` : plan && plan.note ? `<div class="sub">${esc(plan.note)}</div>` : ''}
     ${anni ? `<div class="l">Other ${ordinal(+date.slice(8))}s</div><div class="strip23" style="margin-top:-8px">${other23.map(m => `<button data-go="day/${m.tripId||'none'}_${m.date}"><div class="ph"><img data-asset="${m.photos[0].asset}" alt=""></div><span class="l">${MON[parseDate(m.date).getMonth()]} · ${D.monthsSince(m.date)}</span></button>`).join('')}${(() => { const nd = new Date(parseDate(date)); nd.setMonth(nd.getMonth()+1); const ni = isoDate(nd); return `<button data-go="day/none_${ni}"><div class="ph empty"></div><span class="l">${MON[nd.getMonth()]} · ${D.monthsSince(ni)}</span></button>`; })()}</div>` : ''}
-    ${photos.length ? style === 'polaroid' ? `<div class="polas">${wall.map(({p, m}) => polaroid(p, m, true)).join('')}</div>${more ? seeAll : ''}<div class="stkrow"><span class="l">Stickers · tap one, then a photo</span>${stickerTray('addSticker')}</div>` : `<div class="clean">${wall.map(({p, m}) => `<button class="ph" data-act="viewPh|day:${route.id},${m.id},${m.photos.indexOf(p)}"><img data-asset="${p.asset}" alt=""></button>`).join('')}</div>${more ? seeAll : ''}` : ''}
+    ${more ? mosaicHTML(wall, photos, route.id) + seeAll + (() => { const f = stickerFocus && photos.find(x => x.p.asset === stickerFocus.asset); return f && style === 'polaroid' ? `<div class="l">Stickers on this one</div><div class="polas">${polaroid(f.p, f.m, true)}</div><div class="stkrow"><span class="l">Stickers · tap one, then the photo</span>${stickerTray('addSticker')}</div>` : ''; })() : photos.length ? style === 'polaroid' ? `<div class="polas">${wall.map(({p, m}) => polaroid(p, m, true)).join('')}</div>${more ? seeAll : ''}<div class="stkrow"><span class="l">Stickers · tap one, then a photo</span>${stickerTray('addSticker')}</div>` : `<div class="clean">${wall.map(({p, m}) => `<button class="ph" data-act="viewPh|day:${route.id},${m.id},${m.photos.indexOf(p)}"><img data-asset="${p.asset}" alt=""></button>`).join('')}</div>${more ? seeAll : ''}` : ''}
     ${ms.filter(m => m.kind !== 'plan').map(m => dayBlock(m, t, more)).join('')}
     ${!ms.length ? '<div class="empty">Nothing here yet.</div>' : ''}
     <div class="row mt-auto"><span class="l">${ms.filter(m=>m.kind!=='plan').length} moments${meals ? ' · ' + meals + ' meal' + (meals>1?'s':'') : ''}${cost ? ' · ' + money(cost) : ''}</span><span style="display:flex;gap:6px">${!plan ? `<button class="btn sm lite" data-act="addPlan|${date}${t?','+t.id:''}">+ Plan</button>` : `<button class="btn sm lite" data-act="editPlan|${plan.id}">Edit plan</button>`}<button class="btn sm lite" data-act="importStart|${t && !t.occasion ? t.id : ''}">Import</button><button class="btn sm" data-act="newMoment|${t ? t.id : ''},${date}">+ Add</button></span></div>
@@ -499,12 +534,24 @@ function videoCard(v, by){ const id = ytId(v.url); const t = (String(v.url).matc
 const BARS = Array.from({length:22},(_,i)=>`<i style="height:${30+((i*37)%60)}%"></i>`).join('');
 function voiceCard(v){ return `<div class="glass" style="padding:12px 14px"><div class="wave"><button class="play" data-act="play|${v.asset}"></button>${palOf(v.by)}${v.name ? `<span class="aname">${esc(v.name)}</span>` : `<div class="bars">${BARS}</div>`}<span class="l">${fmtDur(v.dur)}</span><button class="l" data-act="shareAsset|${v.asset}">↑</button></div></div>`; }
 // one memory on the day page: voice notes, songs, the message with its costs, or a booking
+// a day with lots of photos: one big (featured first) and two beside it, the last with "+N"
+function mosaicHTML(wall, photos, dayId){ const byScore = wall.slice().sort((a, b) => (b.p.featured ? 1 : 0) - (a.p.featured ? 1 : 0)); const tile = (x, cls, inner) => `<button class="${cls}" data-act="viewPh|day:${dayId},${x.m.id},${x.m.photos.indexOf(x.p)}">${inner}</button>`;
+  const [a, b, c] = byScore; const rest = photos.length - 3;
+  return `<div class="mosaic">${tile(a, 'mbig', `<img data-asset="${a.p.asset}" alt="">`)}${b ? tile(b, '', `<img ${pvAttr(b.p)} alt="">`) : ''}${c ? `<button class="more" data-go="wall/${dayId}"><img ${pvAttr(c.p)} alt="">${rest > 0 ? `<span>+${rest}</span>` : ''}</button>` : ''}</div>`; }
 function pickWall(photos){ if (photos.length <= 4) return photos;
   const firsts = new Set(); const score = ({ p, m }, i) => { let s = 0; if (stickerFocus && stickerFocus.asset === p.asset) s += 10; if (p.featured) s += 5; if ((p.stickers||[]).length || p.caption) s += 1; if (!firsts.has(m.id)) { firsts.add(m.id); s += 0.5; } return s - i / 10000; };
   const scored = photos.map((x, i) => ({ x, i, s: score(x, i) })).sort((a, b) => b.s - a.s).slice(0, 3).sort((a, b) => a.i - b.i); return scored.map(o => o.x); }
 let stickerFocus = null;
+// "Des remembers… / Jett remembers…" under a memory; tap to read it all
+function notesHTML(m){ if (m.kind !== 'moment' || !m.id) return ''; const me = D.me(); const ns = D.notes(m.id); const mine = ns.find(n => n.by === me.id);
+  return `<div class="notes">${ns.map(n => { const u = D.user(n.by) || {}; return `<button class="note" data-act="${n.by === me.id ? 'noteEdit|' + m.id : 'noteOpen'}"><i class="pal ${u.pal || 'bunny'}"></i><div><span class="l">${n.by === me.id ? 'You remember' : esc(u.name || '') + ' remembers'}</span><p class="clamp">${esc(n.text)}</p></div></button>`; }).join('')}${mine ? '' : `<button class="l addnote" data-act="noteEdit|${m.id}">+ your side of this</button>`}</div>`; }
+ACT.noteOpen = (a, el) => { const p = el.querySelector('p'); if (p) p.classList.toggle('clamp'); };
+ACT.noteEdit = mid => { const me = D.me(); const m = Store.get('moments', mid); if (!m) return; const n = D.note(mid, me.id); const o = D.other() && D.note(mid, D.other().id);
+  openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>${esc(m.text || fmtD(m.date))}</span></div><h2 class="hd md" style="margin:0">Your side</h2>${o ? `<div class="note"><i class="pal ${(D.user(o.by)||{}).pal}"></i><div><span class="l">${esc((D.user(o.by)||{}).name||'')} remembers</span><p>${esc(o.text)}</p></div></div>` : ''}<textarea class="in" id="note-text" style="min-height:150px;font-size:15px" placeholder="What do you remember?">${esc(n ? n.text : '')}</textarea><div class="row">${n ? `<button class="btn sm lite" data-act="noteDel|${mid}">Delete</button>` : '<span></span>'}<button class="btn sm" data-act="noteSave|${mid}">Save</button></div>`, () => { const t = $('#note-text'); if (t) t.focus(); }, 'tall'); };
+ACT.noteSave = async mid => { const me = D.me(); const txt = $('#note-text').value.trim(); const id = 'note_' + mid + '_' + me.id; if (txt) await Store.put('notes', { id, mid, by: me.id, text: txt, at: Date.now() }); else if (D.note(mid, me.id)) await Store.remove(id); closeSheet(); render(); };
+ACT.noteDel = async mid => { if (!await ask('Delete your side?', { ok: 'Delete' })) return; await Store.remove('note_' + mid + '_' + D.me().id); closeSheet(); render(); };
 function momentThumbs(m){ const ph = m.photos || []; if (!ph.length) return ''; const scope = 'day:' + (m.tripId || 'none') + '_' + m.date;
-  return `<div class="mthumbs">${ph.slice(0, 4).map((p, i) => `<button data-act="viewPh|${scope},${m.id},${i}"><img data-asset="${p.asset}" alt="">${i === 3 && ph.length > 4 ? `<span>+${ph.length - 4}</span>` : ''}</button>`).join('')}</div>`; }
+  return `<div class="mthumbs">${ph.slice(0, 4).map((p, i) => `<button data-act="viewPh|${scope},${m.id},${i}"><img ${pvAttr(p)} alt="">${i === 3 && ph.length > 4 ? `<span>+${ph.length - 4}</span>` : ''}</button>`).join('')}</div>`; }
 function dayBlock(m, t, thumbs){
   if (m.kind === 'booking') { const tot = D.costTotal(m); return `<div class="caption">${palOf(m.flight ? (m.flight.who || m.authorId) : m.authorId)}<p>${m.flight ? `${esc(flightLabel(m))} <span class="l">${esc(m.flight.no||'')} · ${esc(m.flight.from||'')} → ${esc(m.flight.to||'')}</span>` : esc(m.text)}${tot ? ` <span class="l">${money2(tot)}</span>` : ''}</p><button class="l" style="margin-left:auto" data-act="${m.flight ? 'editFlight' : 'editMoment'}|${m.id}">edit</button></div>`; }
   const lines = D.costLines(m); const tot = D.costTotal(m);
@@ -512,7 +559,7 @@ function dayBlock(m, t, thumbs){
   const where = m.place && (m.place.name || m.place.area) ? ` <span class="l">· 📍 ${esc(m.place.name || m.place.area)}</span>` : '';
   const cap = m.text ? `<div class="caption">${palOf(m.authorId)}<p>${esc(m.text)}${where}${costTxt}</p><button class="l" style="margin-left:auto" data-act="editMoment|${m.id}">edit</button></div>`
     : `<div class="caption">${palOf(m.authorId)}<p class="l">${lines.length ? lines.map(c => (c.label ? esc(c.label) + ' ' : '') + money2(c.amount) + ' · ' + esc(D.catLabel(t, c.tag))).join(' · ') : ''}</p><button class="l" style="margin-left:auto" data-act="editMoment|${m.id}">edit</button></div>`;
-  return D.voices(m).map(voiceCard).join('') + D.songs(m).map(sg => songCard(sg, m.authorId)).join('') + D.videos(m).map(v => videoCard(v, m.authorId)).join('') + cap + (thumbs ? momentThumbs(m) : '');
+  return D.voices(m).map(voiceCard).join('') + D.songs(m).map(sg => songCard(sg, m.authorId)).join('') + D.videos(m).map(v => videoCard(v, m.authorId)).join('') + cap + (thumbs ? momentThumbs(m) : '') + notesHTML(m);
 }
 // every photo of a day: a grid like Photos, or one after another with captions
 let wallMode = 'grid';
@@ -522,7 +569,7 @@ function renderWall(app){
   const ms = D.moments().filter(m => m.date === date && (t ? m.tripId === t.id : !m.tripId) && (m.photos||[]).length).sort((a,b) => a.createdAt - b.createdAt); const n = ms.reduce((s, m) => s + m.photos.length, 0); const scope = 'day:' + route.id;
   const label = m => `<div class="l wlabel">${palOf(m.authorId)} ${esc(m.text || m.title || 'Moment')}${m.time ? ' · ' + hhmm(m.time) : ''}${m.place && m.place.name ? ' · 📍 ' + esc(m.place.name) : ''}</div>`;
   const body = wallMode === 'grid'
-    ? ms.map(m => label(m) + `<div class="pgrid" style="margin-top:-8px">${m.photos.map((p, i) => `<button data-act="viewPh|${scope},${m.id},${i}"><img data-asset="${p.asset}" alt="">${p.featured ? '<i class="fstar">★</i>' : ''}</button>`).join('')}</div>`).join('')
+    ? ms.map(m => label(m) + `<div class="pgrid" style="margin-top:-8px">${m.photos.map((p, i) => `<button data-act="viewPh|${scope},${m.id},${i}"><img ${pvAttr(p)} alt="">${p.featured ? '<i class="fstar">★</i>' : ''}</button>`).join('')}</div>`).join('')
     : ms.map(m => label(m) + m.photos.map((p, i) => `<div class="wfeed"><button data-act="viewPh|${scope},${m.id},${i}"><img data-asset="${p.asset}" alt="">${p.featured ? '<i class="fstar">★</i>' : ''}</button><input class="in vcap" placeholder="Add a caption" value="${esc(p.caption || '')}" data-act="wallCap|${m.id},${i}" data-on="change">${p.taken ? `<div class="l">${hhmm(p.taken)}</div>` : ''}</div>`).join('')).join('');
   app.innerHTML = `<div class="screen"><div class="bar"><button data-go="day/${route.id}">‹ ${fmtDow(date)} ${MON[parseDate(date).getMonth()]}</button><span>${n} photo${n === 1 ? '' : 's'}</span></div><h1 class="hd">Photos</h1>
     <div class="seg"><button class="${wallMode === 'grid' ? 'on' : ''}" data-act="wallMode|grid">▦ Grid</button><button class="${wallMode === 'scroll' ? 'on' : ''}" data-act="wallMode|scroll">☰ Scroll</button></div>
@@ -552,7 +599,7 @@ function drawViewer(keepText){
       <div class="l">${palOf(m.authorId)} ${esc((D.user(m.authorId)||{}).name||'')} · ${fmtDow(m.date)} ${MON[parseDate(m.date).getMonth()]}${t ? ' · ' + esc(t.city) : ''}</div>
       <div class="cms">${cs.map(c => { const u = D.user(c.by) || {}; const mine = c.by === me.id; return `<div class="cm ${mine ? 'me' : ''}"><i class="pal ${u.pal||'bunny'}"></i><div><button class="bb" ${mine ? `data-act="vDelCm|${c.id}"` : ''}>${esc(c.text)}</button><div class="t">${esc(u.name||'')} · ${timeIn(me, new Date(c.at))}${isoDate(new Date(c.at)) !== today() ? ' · ' + fmtD(isoDate(new Date(c.at))) : ''}</div></div></div>`; }).join('')}</div>
       <div class="row" style="gap:8px;margin-top:auto"><input class="in" id="v-cm" placeholder="Add a comment" value="${esc(typed)}" style="font-size:16px"><button class="btn sm" data-act="vSend">Send</button></div>
-      <div class="vact"><button data-act="vFeature">${p.featured ? '★ Featured' : '☆ Feature'}</button><button data-act="vStickers">Stickers</button><button data-act="shareAsset|${p.asset}">Save to phone</button><button data-act="vDelete">Delete</button></div>
+      <div class="vact"><button data-act="vFeature">${p.featured ? '★ Featured' : '☆ Feature'}</button><button data-act="vFlip">⇋ Flip</button><button data-act="vStickers">Stickers</button><button data-act="shareAsset|${p.asset}">Save</button><button data-act="vDelete">Delete</button></div>
     </div>`, sh => {
       const img = sh.querySelector('#v-img'); let x0 = null;
       img.addEventListener('touchstart', e => { x0 = e.touches[0].clientX; }, { passive: true });
@@ -560,7 +607,13 @@ function drawViewer(keepText){
       img.addEventListener('click', e => { const r = img.getBoundingClientRect(); ACT.vGo(e.clientX > r.left + r.width / 2 ? 1 : -1); });
       if (focusId) { const f = sh.querySelector('#' + focusId); if (f) f.focus(); }
     }, 'viewer');
+  prefetch(p.asset); const nx = viewer.list[(viewer.i + 1) % viewer.list.length]; const nm = nx && Store.get('moments', nx.mid); if (nm && nm.photos[nx.idx]) prefetch(nm.photos[nx.idx].asset);
 }
+// keep the photo itself ready, so Save shares straight away (iPhone blocks sharing if a tap waited on a download)
+const ready = new Map(); function prefetch(id){ if (id && !ready.has(id)) Store.blob(id).then(b => { if (b) ready.set(id, b); }).catch(() => {}); }
+ACT.vFlip = async () => { const cur = viewer.list[viewer.i]; const m = Store.get('moments', cur.mid); const p = m.photos[cur.idx]; const b = ready.get(p.asset) || await Store.blob(p.asset); if (!b) return toast('Photo isn\'t on this phone yet');
+  toast('Flipping…'); const ph = await storePhoto(b, true); const old = [p.asset, p.thumb].filter(Boolean); const cms = Store.all('comments').filter(c => c.asset === p.asset);
+  Object.assign(p, ph); if (!ph.thumb) delete p.thumb; await Store.put('moments', m); if (cms.length) await Store.putMany('comments', cms.map(c => Object.assign(c, { asset: ph.asset }))); old.forEach(a => Store.removeBlob(a)); pvCache.delete(old[0]); drawViewer(true); toast('Flipped'); };
 ACT.vGo = d => { if (!viewer) return; const n = viewer.list.length; if (n < 2) return; viewer.i = (viewer.i + d + n) % n; drawViewer(); };
 ACT.vClose = () => { viewer = null; closeSheet(); render(); };
 ACT.vCap = async (a, el) => { const cur = viewer.list[viewer.i]; const m = Store.get('moments', cur.mid); m.photos[cur.idx].caption = el.value.trim(); await Store.put('moments', m); };
@@ -568,10 +621,13 @@ ACT.vSend = async () => { const el = $('#v-cm'); const text = el.value.trim(); i
 ACT.vDelCm = async id => { if (!await ask('Delete this comment?', { ok: 'Delete' })) return; await Store.remove(id); drawViewer(true); };
 ACT.vFeature = async () => { const cur = viewer.list[viewer.i]; const m = Store.get('moments', cur.mid); const p = m.photos[cur.idx]; p.featured = !p.featured; await Store.put('moments', m); toast(p.featured ? 'Shows on the day\'s wall' : 'Not featured'); drawViewer(true); };
 ACT.vStickers = () => { const cur = viewer.list[viewer.i]; const m = Store.get('moments', cur.mid); stickerFocus = { asset: (m.photos[cur.idx] || {}).asset }; viewer = null; closeSheet(); go('day', { id: (m.tripId || 'none') + '_' + m.date }); toast('Tap a sticker, then the photo'); };
-ACT.vDelete = async () => { if (!await ask('Delete this photo?', { sub: 'It\'s removed for both of you.', ok: 'Delete' })) return; const cur = viewer.list[viewer.i]; const m = Store.get('moments', cur.mid); const [p] = m.photos.splice(cur.idx, 1); await Store.put('moments', m); if (p) { Store.removeBlob(p.asset); await Store.removeMany(Store.all('comments').filter(c => c.asset === p.asset).map(c => c.id)); } viewer.list = viewer.list.filter((x, j) => j !== viewer.i).map(x => x.mid === cur.mid && x.idx > cur.idx ? { mid: x.mid, idx: x.idx - 1 } : x); if (!viewer.list.length) return ACT.vClose(); viewer.i = Math.min(viewer.i, viewer.list.length - 1); drawViewer(); toast('Deleted'); };
+ACT.vDelete = async () => { if (!await ask('Delete this photo?', { sub: 'It\'s removed for both of you.', ok: 'Delete' })) return; const cur = viewer.list[viewer.i]; const m = Store.get('moments', cur.mid); const [p] = m.photos.splice(cur.idx, 1); await Store.put('moments', m); if (p) { Store.removeBlob(p.asset); if (p.thumb) Store.removeBlob(p.thumb); await Store.removeMany(Store.all('comments').filter(c => c.asset === p.asset).map(c => c.id)); } viewer.list = viewer.list.filter((x, j) => j !== viewer.i).map(x => x.mid === cur.mid && x.idx > cur.idx ? { mid: x.mid, idx: x.idx - 1 } : x); if (!viewer.list.length) return ACT.vClose(); viewer.i = Math.min(viewer.i, viewer.list.length - 1); drawViewer(); toast('Deleted'); };
 let audioEl;
 ACT.play = async (id, el) => { if (audioEl && !audioEl.paused && audioEl.dataset.id === id) { audioEl.pause(); el.classList.remove('on'); return; } const u = await Store.blobUrl(id); if (!u) return; if (audioEl) audioEl.pause(); document.querySelectorAll('.play.on').forEach(p => p.classList.remove('on')); audioEl = new Audio(u); audioEl.dataset.id = id; el.classList.add('on'); audioEl.onended = () => el.classList.remove('on'); audioEl.play(); };
-ACT.shareAsset = async id => { const b = await Store.blob(id); if (!b) return; const f = new File([b], id, { type: b.type }); if (navigator.canShare && navigator.canShare({ files:[f] })) return navigator.share({ files:[f] }); download(b, id); };
+ACT.shareAsset = async id => { let b = ready.get(id);
+  if (!b) { b = await Store.blob(id); if (!b) return toast('Photo isn\'t on this phone yet — try again in a moment'); ready.set(id, b); if (navigator.canShare) return toast('Ready — tap Save again'); }
+  const ext = (b.type.split('/')[1] || id.split('.').pop() || 'jpg').replace('jpeg', 'jpg').replace('mp4', 'm4a'); const f = new File([b], 'des-jett-' + today() + '-' + id.slice(0, 5) + '.' + ext, { type: b.type });
+  if (navigator.canShare && navigator.canShare({ files: [f] })) { try { await navigator.share({ files: [f] }); } catch (e) { if (e && e.name === 'NotAllowedError') toast('Tap Save again'); } return; } download(b, f.name); };
 function download(blob, name){ const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); }
 let pendingSticker = null;
 ACT.addSticker = arg => { pendingSticker = stkFrom(arg); if (sheet) closeSheet(); toast('Now tap a photo'); };
@@ -611,6 +667,8 @@ function momentSheet(m, editing, opts){
   opts = opts || {}; const present = opts.present; const me = D.me();
   m.authorId = m.authorId || me.id; m.photos = m.photos || []; normalizeItems(m, !!present);
   let pendingPhotos = [], removedAssets = [], ddOpen = false, costEdit = null, voicePick = false;
+  // each of you writes your own side; they're separate records so you never overwrite each other
+  const myNoteRec = m.id ? D.note(m.id, me.id) : null; let myNote = myNoteRec ? myNoteRec.text : ''; const otherNote = m.id && D.other() ? D.note(m.id, D.other().id) : null;
   let mode = m.tripId ? (D.trip(m.tripId) && D.trip(m.tripId).occasion ? 'occ' : 'trip') : 'none';
   if (!editing && !m.tripId && !present) { const t = D.tripForDate(m.date), o = D.occasionForDate(m.date); if (t) { mode = 'trip'; m.tripId = t.id; } else if (o) { mode = 'occ'; m.tripId = o.id; } }
   const costs = () => m.items.filter(x => x.type === 'cost');
@@ -626,7 +684,7 @@ function momentSheet(m, editing, opts){
     const costRows = cs.length ? `<div class="costs">${cs.map(c => `<button class="cr" data-act="mCostEdit|${c.id}">${c.label ? `<b>${esc(c.label)}</b>` : ''}<span class="tag">${esc(D.catLabel(t, c.tag || 'food'))}</span>${payerPals(c)}<span class="amt">${money2(c.amount)}</span></button>`).join('')}${cs.length > 1 ? `<div class="cr"><span class="l">Total</span><span class="amt">${money2(tot)}</span></div>` : ''}</div>` : '';
     const seg = present ? '' : `<div class="row" style="position:relative"><div class="seg" style="width:210px"><button class="${mode==='trip'?'on':''}" data-act="mMode|trip">Trip</button><button class="${mode==='occ'?'on':''}" data-act="mMode|occ">Occasion</button><button class="${mode==='none'?'on':''}" data-act="mMode|none">None</button></div>${mode !== 'none' ? `<span style="position:relative"><button class="chip on" data-act="mDD">${t ? esc(t.city) + ' · ' + fmtD(t.start) : mode === 'occ' ? 'Pick one' : 'Pick a trip'} ${ddOpen?'▴':'▾'}</button>${ddOpen ? `<div class="dd">${list.slice().reverse().map(o => `<button data-act="mPickTrip|${o.id}"><span style="${o.id===(t&&t.id)?'font-weight:500':''}">${esc(o.city)} · ${fmtD(o.start)}${o.end !== o.start ? ' – ' + fmtD(o.end) : ''}</span>${o.id===(t&&t.id)?'<i class="heart" style="width:10px;height:10px"></i>':''}</button>`).join('')}<button data-act="${mode === 'occ' ? 'mNewOcc' : 'mNewTrip'}"><span class="muted">+ New ${mode === 'occ' ? 'occasion' : 'trip'}</span></button></div>` : ''}</span>` : ''}</div>`;
     return `<div class="bar"><button data-act="closeSheet">Close</button><span>${present ? esc(who.name) + '\'s birthday · ' + fmtD(m.date) : palOf(me.id) + ' ' + esc(me.name)}</span></div><h2 class="hd md" style="margin:0">${present ? (editing ? 'Your present' : 'Wrap a present') : editing ? 'Edit memory' : 'New memory'}</h2>
-    ${present ? `<div class="row" style="justify-content:center;padding:6px 0 2px"><div class="gift"></div></div><textarea class="in" id="m-text" style="min-height:120px;font-size:15px" placeholder="Write them something">${esc(m.text||'')}</textarea>` : `<input class="in big" id="m-text" placeholder="Say it how you'd say it to them" value="${esc(m.text||'')}">`}
+    ${present ? `<div class="row" style="justify-content:center;padding:6px 0 2px"><div class="gift"></div></div><textarea class="in" id="m-text" style="min-height:120px;font-size:15px" placeholder="Write them something">${esc(m.text||'')}</textarea>` : `<input class="in big" id="m-text" placeholder="Say it how you'd say it to them" value="${esc(m.text||'')}">${otherNote ? `<div class="note"><i class="pal ${(D.user(otherNote.by)||{}).pal||'puppy'}"></i><div><span class="l">${esc((D.user(otherNote.by)||{}).name||'')} remembers</span><p>${esc(otherNote.text)}</p></div></div>` : ''}<textarea class="in" id="m-note" placeholder="Your side — what do you remember?" style="min-height:64px;font-size:14px">${esc(myNote)}</textarea>`}
     ${seg}
     <div class="attach"><button data-act="mPhoto|photo"><b>◫</b>Photo</button><button data-act="mPhoto|polaroid"><b>▣</b>Polaroid</button><button class="${rec || voicePick ?'sel':''}" data-act="mVoice"><b>●</b>${rec ? 'Stop' : voiceSaving ? 'Saving…' : 'Voice'}</button><button data-act="mSong"><b>♫</b>Song</button><button data-act="mVideo"><b>▶</b>Video</button>${present ? '' : `<button data-act="mCost"><b>$</b>Cost</button>`}</div>
     ${voicePick && !rec ? `<div class="chips"><button class="chip on" data-act="mVoiceRec">● Record now</button><button class="chip" data-act="mVoiceFile">↑ Choose an audio file</button><button class="chip" data-act="mVoice">Cancel</button></div>` : ''}
@@ -644,7 +702,7 @@ function momentSheet(m, editing, opts){
     <div class="row" style="margin-top:auto"><button class="btn sm lite" data-act="cRemove">Remove</button><button class="btn sm" data-act="cDone">Done</button></div>`; };
   const draw = () => costEdit ? drawCost() : drawMain();
   const keepCost = () => { if (!costEdit) return; const l = $('#c-label'), a = $('#c-amt'); if (l) costEdit.label = l.value.trim(); if (a) costEdit.amount = a.value === '' ? '' : +a.value; readSplit(costEdit, 'c'); };
-  const keep = () => { if (costEdit) return keepCost(); const tx = $('#m-text'), dt = $('#m-date'); if (tx) m.text = tx.value; if (dt) m.date = dt.value; };
+  const keep = () => { if (costEdit) return keepCost(); const tx = $('#m-text'), dt = $('#m-date'), nt = $('#m-note'); if (tx) m.text = tx.value; if (dt) m.date = dt.value; if (nt) myNote = nt.value; };
   const redraw = () => { keep(); openSheet(draw(), null, 'tall'); };
   const confirmRm = async what => editing ? await ask('Remove this ' + what + '?', { ok: 'Remove' }) : true;
   ACT.mMode = k => { keep(); mode = k; ddOpen = false; if (k === 'none') m.tripId = ''; else { const cur = m.tripId && D.trip(m.tripId); if (!cur || !!cur.occasion !== (k === 'occ')) { const f = k === 'occ' ? D.occasionForDate(m.date) : D.tripForDate(m.date); m.tripId = f ? f.id : ''; } } redraw(); };
@@ -655,7 +713,7 @@ function momentSheet(m, editing, opts){
   let photoKind = 'photo';
   ACT.mPhoto = kind => { keep(); photoKind = kind; $('#m-file').click(); };
   ACT.mFiles = (a, f) => { Array.from(f.files).forEach(file => pendingPhotos.push({ file, polaroid: photoKind === 'polaroid', url: URL.createObjectURL(file) })); redraw(); };
-  ACT.mRmPhoto = async arg => { keep(); const [k, i] = arg.split(','); if (k === 'p') { pendingPhotos.splice(+i, 1); return redraw(); } if (!await confirmRm('photo')) return; const [p] = m.photos.splice(+i, 1); if (p) removedAssets.push(p.asset); redraw(); };
+  ACT.mRmPhoto = async arg => { keep(); const [k, i] = arg.split(','); if (k === 'p') { pendingPhotos.splice(+i, 1); return redraw(); } if (!await confirmRm('photo')) return; const [p] = m.photos.splice(+i, 1); if (p) { removedAssets.push(p.asset); if (p.thumb) removedAssets.push(p.thumb); } redraw(); };
   ACT.mRmItem = async id => { keep(); const it = m.items.find(x => x.id === id); if (!it) return; if (!await confirmRm(it.type === 'voice' ? 'voice note' : it.type)) return; m.items = m.items.filter(x => x.id !== id); if (it.type === 'voice' && it.asset) removedAssets.push(it.asset); redraw(); };
   const songAsk = async sg => { const url = await ask('Paste a Spotify link', { input: sg.url || '', placeholder: 'https://open.spotify.com/track/…', ok: 'Next' }); if (url == null || !url) return null; sg.url = url; sg.title = (await ask('Song title', { sub: 'optional', input: sg.title || '', ok: 'Next' })) || ''; sg.artist = (await ask('Artist', { sub: 'optional', input: sg.artist || '', ok: 'Done' })) || ''; return sg; };
   const videoAsk = async v => { const url = await ask('Paste a YouTube link', { input: v.url || '', placeholder: 'https://youtu.be/…', ok: 'Next' }); if (url == null || !url) return null; if (!ytId(url)) toast('That doesn\'t look like a YouTube link — saved as a link'); v.url = url.trim(); v.title = (await ask('What is it?', { sub: 'optional', input: v.title || '', ok: 'Done' })) || ''; return v; };
@@ -698,16 +756,17 @@ function momentSheet(m, editing, opts){
     };
     rec.start(1000); redraw(); toast('Recording… tap Stop when done');
   };
-  ACT.mDelete = async () => { if (!await ask(present ? 'Delete this present?' : 'Delete this memory?', { ok: 'Delete' })) return; await Store.remove(m.id); closeSheet(); toast('Deleted'); render(); };
+  ACT.mDelete = async () => { if (!await ask(present ? 'Delete this present?' : 'Delete this memory?', { ok: 'Delete' })) return; await Store.remove(m.id); await Store.removeMany(Store.all('notes').filter(n => n.mid === m.id).map(n => n.id)); closeSheet(); toast('Deleted'); render(); };
   ACT.mSave = async () => {
     if (costEdit) ACT.cDone();
     if (rec) { const p = recDone; rec.stop(); await p; } if (voiceSaving) await voiceSaving; keep();
     m.items = m.items.filter(it => it.type !== 'cost' || +it.amount || it.label);
     if (!m.text && !pendingPhotos.length && !m.photos.length && !m.items.length) return toast('Add something first');
-    for (const p of pendingPhotos) { const blob = await shrink(p.file); const asset = await Store.putBlob(blob, 'jpg'); m.photos.push({ asset, polaroid: p.polaroid, stickers: [] }); }
+    for (const p of pendingPhotos) { m.photos.push(Object.assign(await storePhoto(p.file), { polaroid: p.polaroid, stickers: [] })); }
     m.id = m.id || Store.uid(); m.createdAt = m.createdAt || Date.now();
     if (present) { Object.assign(m, { forUser: present.forUser, fromUser: me.id, authorId: me.id }); await Store.put('presents', m); }
     else { m.kind = m.kind || 'moment'; if (mode === 'none') m.tripId = ''; else if (!m.tripId) { const f = mode === 'occ' ? D.occasionForDate(m.date) : D.tripForDate(m.date); m.tripId = f ? f.id : ''; } await Store.put('moments', m); }
+    if (!present) { const nid = 'note_' + m.id + '_' + me.id; const txt = (myNote || '').trim(); if (txt) { if (!myNoteRec || myNoteRec.text !== txt) await Store.put('notes', { id: nid, mid: m.id, by: me.id, text: txt, at: Date.now() }); } else if (myNoteRec) await Store.remove(nid); }
     for (const a of removedAssets) { Store.removeBlob(a); await Store.removeMany(Store.all('comments').filter(c => c.asset === a).map(c => c.id)); }
     closeSheet(); toast(present ? 'Wrapped' : 'Saved'); render();
   };
@@ -724,7 +783,18 @@ function bindPaidBy(p, get, keep, redraw){
   ACT[p + 'SplitEdit'] = (uid, el) => { keep(); const c = get(); const [a, b] = D.users2(); const sp = c.split || (c.split = { mode:'pct' }); const other = uid === a.id ? b.id : a.id; const v = +el.value || 0; if (sp.mode === 'amt') sp[other] = Math.max(0, Math.round(((+c.amount || 0) - v) * 100) / 100); else sp[other] = Math.max(0, Math.min(100, 100 - v)); sp[uid] = v; redraw(); };
 }
 function audioDuration(file){ return new Promise(res => { try { const a = new Audio(); const u = URL.createObjectURL(file); const done = v => { URL.revokeObjectURL(u); res(isFinite(v) ? v : 0); }; a.preload = 'metadata'; a.onloadedmetadata = () => done(a.duration); a.onerror = () => done(0); setTimeout(() => done(a.duration || 0), 4000); a.src = u; } catch (e) { res(0); } }); }
-async function shrink(file){ try { const img = await createImageBitmap(file); const max = 1600, s = Math.min(1, max / Math.max(img.width, img.height)); const c = document.createElement('canvas'); c.width = Math.round(img.width * s); c.height = Math.round(img.height * s); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); return await new Promise(r => c.toBlob(r, 'image/jpeg', .86)); } catch (e) { return file; } }
+// Photos: decode through an <img> (it always honours the camera's rotation), then shrink in halves with
+// high-quality smoothing — one big jump from 4000px makes iPhone photos look grainy.
+async function decodeImage(blob){ const u = URL.createObjectURL(blob); try { const img = new Image(); img.decoding = 'async'; img.src = u; await (img.decode ? img.decode() : new Promise((res, rej) => { img.onload = res; img.onerror = rej; })); return img; } finally { setTimeout(() => URL.revokeObjectURL(u), 1000); } }
+function scaleTo(src, w0, h0, max, mirror){ let w = w0, h = h0, cur = src; const s = Math.min(1, max / Math.max(w0, h0)); const W = Math.max(1, Math.round(w0 * s)), H = Math.max(1, Math.round(h0 * s));
+  while (w / 2 > W * 1.05) { const c = document.createElement('canvas'); c.width = Math.round(w / 2); c.height = Math.round(h / 2); const x = c.getContext('2d'); x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high'; x.drawImage(cur, 0, 0, c.width, c.height); cur = c; w = c.width; h = c.height; }
+  const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d'); x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high'; if (mirror) { x.translate(W, 0); x.scale(-1, 1); } x.drawImage(cur, 0, 0, W, H); return c; }
+const toJpeg = (c, q) => new Promise(r => c.toBlob(r, 'image/jpeg', q));
+async function shrink(file, max, mirror){ try { const img = await decodeImage(file); const c = scaleTo(img, img.naturalWidth, img.naturalHeight, max || 2048, mirror); return await toJpeg(c, .9); } catch (e) { return file; } }
+// a photo is stored twice: the photo (2048px) and a small preview (480px) for grids and strips
+async function storePhoto(file, mirror){ let img; try { img = await decodeImage(file); } catch (e) { const asset = await Store.putBlob(file, 'jpg'); return { asset }; }
+  const big = await toJpeg(scaleTo(img, img.naturalWidth, img.naturalHeight, 2048, mirror), .9); const small = await toJpeg(scaleTo(img, img.naturalWidth, img.naturalHeight, 480, mirror), .8);
+  const thumb = await Store.putBlob(small, 'jpg'); const asset = await Store.putBlob(big, 'jpg'); return { asset, thumb }; }
 
 // ---------- flight sheet ----------
 ACT.editFlight = id => { const src = Store.get('moments', id); if (!src) return; const m = JSON.parse(JSON.stringify(src)); const me = D.me(); m.flight = m.flight || {}; let ddOpen = false;
@@ -1260,7 +1330,7 @@ ACT.stkTray = () => { openSheet(`<div class="bar"><button data-act="closeSheet">
 let chatDraft = '', chatThink = false;
 function chatMsgBody(b){
   if (b.sticker) return stkHTML(b.sticker, 'cstk');
-  if (b.photo) return `<button class="cph" data-act="chatPhoto|${b.id}"><img data-asset="${b.photo}" alt=""></button>${b.text && !b.auto ? `<div class="b">${esc(b.text)}</div>` : ''}`;
+  if (b.photo) return `<button class="cph" data-act="chatPhoto|${b.id}"><img data-thumb="${b.photo}" data-pv="${b.thumb || ''}" alt=""></button>${b.text && !b.auto ? `<div class="b">${esc(b.text)}</div>` : ''}`;
   return `<div class="b ${b.kind === 'think' ? 'think' : ''}">${esc(b.text)}</div>`;
 }
 function renderChat(app){
@@ -1280,13 +1350,13 @@ ACT.chatThink = () => { chatThink = !chatThink; render(); const i = $('#chat-in'
 ACT.chatSend = async () => { const el = $('#chat-in'); const text = (el ? el.value : chatDraft).trim(); if (!text) return; chatDraft = ''; await Store.put('bubbles', { id: Store.uid(), userId: D.me().id, kind: chatThink ? 'think' : 'say', text, at: Date.now() }); chatThink = false; render(); const i = $('#chat-in'); if (i) i.focus(); };
 ACT.chatPick = () => $('#chat-file').click();
 ACT.chatFiles = async (a, el) => { const files = Array.from(el.files || []); if (!files.length) return; const text = chatDraft.trim(); chatDraft = ''; toast(files.length === 1 ? 'Sending…' : 'Sending ' + files.length + ' photos…');
-  for (const [i, f] of files.entries()) { const blob = await shrink(f); const asset = await Store.putBlob(blob, 'jpg'); await Store.put('bubbles', { id: Store.uid(), userId: D.me().id, kind: 'say', photo: asset, text: i === 0 && text ? text : '📷 Photo', auto: !(i === 0 && text), at: Date.now() + i }); }
+  for (const [i, f] of files.entries()) { const ph = await storePhoto(f); await Store.put('bubbles', { id: Store.uid(), userId: D.me().id, kind: 'say', photo: ph.asset, thumb: ph.thumb, text: i === 0 && text ? text : '📷 Photo', auto: !(i === 0 && text), at: Date.now() + i }); }
   render(); };
 ACT.chatStk = () => openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Send a sticker</span></div>${stickerTray('chatSendStk')}<div class="l">Hold one of yours to remove it.</div>`, sh => { sh.dataset.tray = 'chatSendStk'; bindHold(sh); });
 ACT.chatSendStk = async arg => { const s = stkFrom(arg); closeSheet(); await Store.put('bubbles', { id: Store.uid(), userId: D.me().id, kind: 'say', sticker: s, text: 'sent a sticker', auto: true, at: Date.now() }); render(); };
-ACT.chatPhoto = id => { const b = Store.get('bubbles', id); if (!b) return; const mine = b.userId === D.me().id; const u = D.user(b.userId) || {};
+ACT.chatPhoto = id => { const b = Store.get('bubbles', id); if (!b) return; prefetch(b.photo); const mine = b.userId === D.me().id; const u = D.user(b.userId) || {};
   openSheet(`<div class="vtop"><button data-act="closeSheet">‹ Chat</button><span>${esc(u.name||'')} · ${fmtD(isoDate(new Date(b.at)))}</span></div><div class="vimg fit"><img data-asset="${b.photo}" alt=""></div><div class="vbody">${b.text && !b.auto ? `<div style="font-size:14px">${esc(b.text)}</div>` : ''}<div class="vact"><button data-act="shareAsset|${b.photo}">Save to phone</button>${mine ? `<button data-act="chatDelPhoto|${b.id}">Delete</button>` : ''}</div></div>`, null, 'viewer'); };
-ACT.chatDelPhoto = async id => { if (!await ask('Delete this photo?', { sub: 'It\'s removed from the chat for both of you.', ok: 'Delete' })) return; const b = Store.get('bubbles', id); if (b && b.photo) Store.removeBlob(b.photo); await Store.remove(id); closeSheet(); render(); };
+ACT.chatDelPhoto = async id => { if (!await ask('Delete this photo?', { sub: 'It\'s removed from the chat for both of you.', ok: 'Delete' })) return; const b = Store.get('bubbles', id); if (b && b.photo) { Store.removeBlob(b.photo); if (b.thumb) Store.removeBlob(b.thumb); } await Store.remove(id); closeSheet(); render(); };
 
 // ---------- V2.9: things to do together (lists) ----------
 const DEFAULT_LISTS = [{ key: 'cook', label: 'To cook', icon: '🍳' }, { key: 'do', label: 'To do', icon: '✅' }, { key: 'places', label: 'Places to go', icon: '📍' }, { key: 'watch', label: 'To watch', icon: '🎬' }];
@@ -1541,7 +1611,7 @@ ACT.impSave = async () => {
   let made = 0; const tripsUsed = new Set();
   for (const g of live) {
     const photos = [];
-    for (const x of groupItems(g).filter(x => !x.out)) { const blob = await shrink(x.file); const asset = await Store.putBlob(blob, 'jpg'); photos.push({ asset, polaroid: false, stickers: [], taken: x.dt ? x.dt.slice(11, 16) : '' }); mine.saved++; const pr = $('#imp-prog'); if (pr) pr.textContent = `${mine.saved} of ${mine.toSave}…`; }
+    for (const x of groupItems(g).filter(x => !x.out)) { const ph = await storePhoto(x.file); photos.push({ asset: ph.asset, thumb: ph.thumb, polaroid: false, stickers: [], taken: x.dt ? x.dt.slice(11, 16) : '' }); mine.saved++; const pr = $('#imp-prog'); if (pr) pr.textContent = `${mine.saved} of ${mine.toSave}…`; }
     const sp = groupSpan(g); const trip = t0 && g.date >= t0.start && g.date <= t0.end ? t0 : D.tripForDate(g.date); if (trip) tripsUsed.add(trip.id);
     await Store.put('moments', { id: Store.uid(), tripId: trip ? trip.id : '', date: g.date, authorId: me.id, kind: 'moment', text: g.title || '', photos, items: [], time: sp && g.kind === 'time' ? sp.a.slice(11, 16) : '', place: g.place && g.place.lat != null ? g.place : null, imported: true, createdAt: sp && g.kind === 'time' ? dtMs(sp.a) : Date.now() + made, addedAt: Date.now() });
     made++;
@@ -1594,7 +1664,7 @@ ACT.doExportAll = async () => {
   for (const j of jobs) { const b = await Store.blob(j.asset).catch(() => null); n++; if (b) { zip.file(j.path, b); files[j.asset] = j.path; } else missing++; if (prog) prog.textContent = `Collecting ${n} of ${jobs.length}…`; }
   // readable copies
   const who = id => (D.user(id) || {}).name || '';
-  const memTxt = ms.filter(m => m.kind !== 'plan').map(m => { const t = m.tripId ? Store.get('trips', m.tripId) : null; return [`${m.date}${m.time ? ' ' + m.time : ''} · ${who(m.authorId)}${t ? ' · ' + t.city : ''}`, m.flight ? `  ✈ ${m.flight.no || ''} ${m.flight.from || ''} → ${m.flight.to || ''} ${m.flight.dep || ''}–${m.flight.arr || ''}` : '', m.text ? '  ' + m.text : '', m.place && m.place.name ? '  📍 ' + m.place.name : '', ...D.costLines(m).map(c => `  $${c.amount} ${c.label || ''} (${c.tag || 'other'}) · ${D.payerTextC(c)}`), ...D.songs(m).map(s => `  ♫ ${s.title || ''} ${s.artist ? '— ' + s.artist : ''} ${s.url}`), ...D.videos(m).map(v => `  ▶ ${v.title || ''} ${v.url}`), ...(m.photos||[]).map((p, i) => p.caption ? `  photo ${i + 1}: ${p.caption}` : ''), ...D.voices(m).map(v => `  ● voice note ${fmtDur(v.dur)}`)].filter(Boolean).join('\n'); }).join('\n\n');
+  const memTxt = ms.filter(m => m.kind !== 'plan').map(m => { const t = m.tripId ? Store.get('trips', m.tripId) : null; return [`${m.date}${m.time ? ' ' + m.time : ''} · ${who(m.authorId)}${t ? ' · ' + t.city : ''}`, m.flight ? `  ✈ ${m.flight.no || ''} ${m.flight.from || ''} → ${m.flight.to || ''} ${m.flight.dep || ''}–${m.flight.arr || ''}` : '', m.text ? '  ' + m.text : '', m.place && m.place.name ? '  📍 ' + m.place.name : '', ...D.costLines(m).map(c => `  $${c.amount} ${c.label || ''} (${c.tag || 'other'}) · ${D.payerTextC(c)}`), ...D.songs(m).map(s => `  ♫ ${s.title || ''} ${s.artist ? '— ' + s.artist : ''} ${s.url}`), ...D.videos(m).map(v => `  ▶ ${v.title || ''} ${v.url}`), ...D.notes(m.id).map(n => `  ${who(n.by)} remembers: ${n.text}`), ...(m.photos||[]).map((p, i) => p.caption ? `  photo ${i + 1}: ${p.caption}` : ''), ...D.voices(m).map(v => `  ● voice note ${fmtDur(v.dur)}`)].filter(Boolean).join('\n'); }).join('\n\n');
   zip.file('Memories.txt', memTxt || 'No memories yet.');
   zip.file('Plans.txt', ms.filter(m => m.kind === 'plan').map(p => `${p.date}${p.time ? ' ' + p.time : ''} · ${p.title || ''}${p.note ? ' — ' + p.note : ''}`).join('\n') || 'No plans.');
   zip.file('Chat.txt', D.bubbles().slice().sort((a, b) => a.at - b.at).map(b => { const d = new Date(b.at); return `${isoDate(d)} ${d.toTimeString().slice(0, 5)} ${who(b.userId)}${b.kind === 'think' ? ' (thinking)' : ''}: ${b.photo ? '[photo] ' + (b.auto ? '' : b.text) : b.sticker ? '[sticker]' : b.text}`; }).join('\n') || 'Nothing yet.');
@@ -1620,7 +1690,7 @@ ACT.importAll = () => { const f = document.createElement('input'); f.type = 'fil
     render(); } catch (e) { toast('Couldn\'t restore: ' + e.message); } }; f.click(); };
 
 // ---------- What's new (shown once per phone after an update; Profile → What's new replays it) ----------
-const APP_VERSION = '2.11'; const WN_VERSIONS = ['2.10', '2.11'];
+const APP_VERSION = '2.12'; const WN_VERSIONS = ['2.10', '2.11', '2.12'];
 let wnIdx = 0, wnForce = false;
 function needsWhatsNew(){ if (window.DJ_SKIP_WHATSNEW && !wnForce) return false; if (wnForce) return true; try { return localStorage.getItem('dj.seenVer') !== APP_VERSION; } catch (e) { return false; } }
 function markWhatsNewSeen(){ try { localStorage.setItem('dj.seenVer', APP_VERSION); } catch (e) {} }
@@ -1638,7 +1708,18 @@ function whatsNewCards(){ const [a, b] = D.users2(); const o = D.other() || b ||
     ['Photo, right from Home', `Tap your pal: Say · Think · <b>Photo</b>. Pick one (or a few), add a caption, send — it pops up on Home and stays in Chat.`,
       `<div class="mini"><div class="seg"><button>Say</button><button>Think</button><button class="on">Photo</button></div><div class="btn lite block" style="margin-top:10px">◫ Take or choose a photo</div></div>`],
   ].map(c => c.concat('2.11'));
-  return v211.concat([
+  const sw = c => `<i style="display:block;width:46px;height:46px;border-radius:9px;background:${c}"></i>`;
+  const v212 = [
+    ['Our days', `A trip opens on its days now — each date with its memories, photos, flights and plans, newest first (tap ⇅ to start from day 1). Tap any of it to open that day.`,
+      `<div class="mini"><div class="tday" style="border:0;padding:0"><div class="dn"><b>3</b><span>Sat</span></div><div class="ms"><div class="tm"><div class="t"><i class="pal bunny"></i>Morning wander</div><div class="m">9:40am · 📍 Kensington Market</div><div style="display:flex;gap:4px">${['#E9C9A8','#8E6A7E','#B9D3C9','#C4D4E6'].map(sw).join('')}</div></div><div class="tplan">Dinner at Alo · 7:00pm · plan</div></div></div></div>`],
+    ['Your side of it', `Every memory can hold what each of you remembers — your own words, under “Des remembers” and “Jett remembers”. Add yours when you make a memory, or tap “+ your side of this” on any day.`,
+      `<div class="mini"><div class="notes" style="margin:0"><div class="note"><i class="pal bunny"></i><div><span class="l">Des remembers</span><p>the guy who sang to us at the ramen place 😭</p></div></div><div class="note"><i class="pal puppy"></i><div><span class="l">Jett remembers</span><p>you ate all my gyoza</p></div></div></div></div>`],
+    ['Busy days, tidier', `Days with lots of photos show one big and two small, with “+39” — tap for all of them. The grid loads quickly now (small previews), and ☆ Feature picks the big one.`,
+      `<div class="mini"><div class="mosaic" style="grid-template-rows:70px 70px"><button style="background:#E9C9A8"></button><button style="background:#B9D3C9"></button><button class="more" style="background:#8E6A7E"><span>+39</span></button></div></div>`],
+    ['Sharper photos', `Photos keep more detail now. Selfies came out mirrored? Tap a photo → ⇋ Flip. Save works on each other's photos, and chat photos always arrive with their message.`,
+      `<div class="mini" style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap"><span class="chip">⇋ Flip</span><span class="chip">Save</span><span class="chip on">sharper</span></div>`],
+  ].map(c => c.concat('2.12'));
+  return v212.concat(v211).concat([
     ['Chat, with photos', `Chat has its own typing box now. Send messages, 💭 thoughts, photos and stickers — photos stay, and you can save them to your phone. You can also send a photo from your pal on Home.`,
       `<div class="mini" style="display:flex;flex-direction:column;gap:8px">${msg(o, `<div class="b">look where we ate 😭</div>`)}${msg(o, `<div class="cph" style="width:130px;height:96px;background:linear-gradient(135deg,#E9C9A8,#C98F7A)"></div>`)}${msg(me, `<div class="b">going back tomorrow</div>`, true)}<div class="composer" style="margin-top:4px"><span class="cbtn">◫</span><span class="cbtn">☺</span><span class="in" style="color:var(--mu);font-size:14px">say something</span><span class="btn sm">Send</span></div></div>`],
     ['Your own stickers', `Make stickers out of your photos: in Photos, press and hold one of you until it lifts out, tap <b>Copy</b>, then <b>Paste</b> here. They're shared — use them on photos and in chat. Hold one to remove it.`,
@@ -1665,5 +1746,5 @@ ACT.whatsNew = () => { wnIdx = 0; wnForce = true; render(); window.scrollTo(0, 0
 window.addEventListener('hashchange', () => { const [n, id] = location.hash.slice(1).split('/'); if (n && n !== route.name || id !== route.id) { route = { name: n || 'home', id }; render(); } });
 Store.onChange(() => { if (viewer) drawViewer(true); else if (!sheet) render(); });
 Store.ready = Store.connect(CFG).then(() => { const [n, id] = location.hash.slice(1).split('/'); route = { name: n || 'home', id }; render(); setInterval(applySky, 60000); syncIcs(false); checkPush(); setInterval(() => syncIcs(false), 3600000); if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(()=>{}); });
-window.DJ = { D, go, ACT, render, parseConfirmation, skyMode, Store, imp: () => imp, pdfText };
+window.DJ = { D, go, ACT, render, parseConfirmation, skyMode, Store, imp: () => imp, pdfText, storePhoto };
 })();

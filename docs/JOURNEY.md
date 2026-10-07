@@ -129,3 +129,11 @@ Two evenings of feedback rounds on real screens produced V2:
 - Tap your pal: Say · Think · Photo (pick a few, caption, send).
 - What's new now remembers which cards you've seen: someone who saw October's first set only gets the 4 new ones.
 - YouTube videos: ▶ Video next to Song — paste a link (youtu.be, watch?v=, shorts, a timestamp) and it plays inside the memory.
+
+## V2.12 (photos that arrive, look sharp, and don't sprawl; our days; your side)
+- Chat photos not showing for the other person: the message used to sync before its photo. Now a record that points at a photo waits until the photo is uploaded (chat photos first in line), and a phone that still can't find a photo keeps retrying (2s, 6s, 15s, 40s, 90s) instead of giving up.
+- Sharper, upright photos: decoded through the browser's image (honours the camera's rotation), shrunk in halves with high-quality smoothing, kept at 2048px / 90%. Every new photo also gets a 480px preview used by grids, strips, chat and Home — "See all" loads fast, only what's on screen, four at a time. Older photos get a preview made once and kept on the phone.
+- ⇋ Flip on any photo (mirrored selfies); comments follow the flipped photo. Save works on each other's photos (the photo is fetched when it opens, so the tap shares straight away) and files are named des-jett-date.jpg.
+- Busy days (5+ photos): a mosaic — one big (featured first), two beside it, "+N" — then See all. Days with up to 4 keep the polaroids.
+- Trip page opens on "Our days": each date with its memories (photo strip, time, place, cost, ✎ notes), flights and plans; today in pink; empty days one line with + add; newest first or ⇅ day 1 first. The Days page shows every day the same way. Budget · Photos · Days · Import sit above.
+- Your side: each of you writes what you remember about a memory (separate records, so you never overwrite each other). In the memory sheet, and under the memory on the day page ("+ your side of this").

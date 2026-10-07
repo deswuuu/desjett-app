@@ -55,27 +55,37 @@
         if (error) { failed = true; console.warn('sync delete', error.message); }
         else { dels.forEach(id => { delete queue.del[id]; synced.delete(id); }); saveQueue(); saveSynced(); }
       }
-      // puts, in batches
-      const ids = Object.keys(queue.put).filter(id => docs[id]);
-      Object.keys(queue.put).forEach(id => { if (!docs[id]) delete queue.put[id]; });
-      for (let i = 0; i < ids.length; i += 200) {
+      // records that don't wait on a photo go straight away; ones that point at a photo go after it's uploaded,
+      // so the other phone never gets a message before its photo. Chat photos jump the queue.
+      const putDocs = async ids => { for (let i = 0; i < ids.length; i += 200) {
         const chunk = ids.slice(i, i + 200); const recs = chunk.map(id => docs[id]);
         const { error } = await sb.from('docs').upsert(recs);
-        if (error) { failed = true; console.warn('sync', error.message); break; }
+        if (error) { failed = true; console.warn('sync', error.message); return; }
         chunk.forEach(id => { if (queue.put[id] && docs[id] && queue.put[id] <= docs[id].updated_at) delete queue.put[id]; synced.add(id); });
-        saveQueue(); saveSynced();
-      }
+        saveQueue(); saveSynced(); } };
+      Object.keys(queue.put).forEach(id => { if (!docs[id]) delete queue.put[id]; });
+      const waiting = Object.keys(queue.blob); const json = id => JSON.stringify(docs[id].data);
+      const needs = id => waiting.length && waiting.some(b => json(id).includes(b));
+      const ids = Object.keys(queue.put); const later = ids.filter(needs), now = ids.filter(id => !later.includes(id));
+      await putDocs(now);
       // removed photos / voice notes
       const bdel = Object.keys(queue.blobDel);
-      if (bdel.length) { const { error } = await sb.storage.from('assets').remove(bdel); if (error) { failed = true; console.warn('remove', error.message); } else { bdel.forEach(id => { delete queue.blobDel[id]; uploaded.delete(id); }); saveQueue(); saveUploaded(); } }
-      // photos / voice notes
-      for (const id of Object.keys(queue.blob)) {
+      // (a failure here must never hold up new photos and records)
+      if (bdel.length) { try { const { error } = await sb.storage.from('assets').remove(bdel); if (error) { failed = true; console.warn('remove', error.message); } else { bdel.forEach(id => { delete queue.blobDel[id]; uploaded.delete(id); }); saveQueue(); saveUploaded(); } } catch (e) { failed = true; console.warn('remove', e.message); } }
+      // photos / voice notes (the ones a chat message is waiting on first)
+      const chatIds = later.filter(id => docs[id] && docs[id].collection === 'bubbles').map(json).join(' ');
+      const order = waiting.slice().sort((a, b) => (chatIds.includes(b) ? 1 : 0) - (chatIds.includes(a) ? 1 : 0));
+      for (const id of order) {
         const blob = await getBlobLocal(id).catch(() => null);
         if (!blob) { delete queue.blob[id]; continue; }
-        const { error } = await sb.storage.from('assets').upload(id, blob, { upsert: true, contentType: blob.type || undefined });
-        if (error && !/exists/i.test(error.message)) { failed = true; console.warn('upload', error.message); break; }
+        let error = null; try { ({ error } = await sb.storage.from('assets').upload(id, blob, { upsert: true, contentType: blob.type || undefined })); } catch (e) { error = e; }
+        if (error && !/exists/i.test(error.message || '')) { failed = true; console.warn('upload', error.message); continue; }
         delete queue.blob[id]; uploaded.add(id); saveQueue(); saveUploaded();
+        // anything that was only waiting on this photo can go now
+        const ready = later.filter(d => queue.put[d] && docs[d] && !Object.keys(queue.blob).some(b => json(d).includes(b)));
+        if (ready.length) await putDocs(ready);
       }
+      await putDocs(Object.keys(queue.put).filter(id => docs[id]));
     } catch (e) { failed = true; console.warn('sync', e.message); }
     flushing = false;
     if (failed) { scheduleFlush(retryMs); retryMs = Math.min(retryMs * 2, 60000); }
@@ -119,6 +129,9 @@
       if (!blob) return null;
       const u = URL.createObjectURL(blob); urlCache.set(id, u); return u;
     },
+    // a local-only copy (small previews made on this phone for older photos); never uploaded
+    async putLocalBlob(id, blob){ try { await putBlobLocal(id, blob); } catch (e) {} },
+    async localBlob(id){ return getBlobLocal(id).catch(() => null); },
     async blob(id){ let b = await getBlobLocal(id).catch(() => null); if (!b && sb) { const { data } = await sb.storage.from('assets').download(id); if (data) { b = data; putBlobLocal(id, b).catch(() => {}); uploaded.add(id); saveUploaded(); } } return b; },
     exportJSON(){ return JSON.stringify(Object.values(docs), null, 2); },
     // put back a photo / voice note from a backup under its original id (uploaded again if the server lacks it)
