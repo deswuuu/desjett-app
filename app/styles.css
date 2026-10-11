@@ -505,3 +505,39 @@ button,a,.tap{touch-action:manipulation}
 .tday.today .dn b{color:#E0607E}
 .tplan{font-size:12.5px;color:var(--fg2);display:flex;gap:6px;align-items:center;text-align:left}
 .tplan:before{content:"";width:6px;height:6px;border-radius:50%;background:var(--fg2);flex:none}
+/* V2.13: my money */
+.mrow{display:block;width:100%;text-align:left;padding:11px 0;border-bottom:1px solid var(--ln)}
+.mrow:last-child{border-bottom:0}
+.mrow b{font-weight:500}
+.mbar{height:5px;border-radius:3px;background:var(--ln);margin-top:7px;overflow:hidden}
+.mbar.big{height:7px}
+.mbar i{display:block;height:100%;background:var(--btn);border-radius:3px}
+.mbar.near i{background:#D9A55B}.mbar.over i{background:#E0607E}
+.ybars{position:relative;display:flex;gap:4px;align-items:flex-end;height:120px;margin-top:14px}
+.ybars:before{content:"";position:absolute;left:0;right:0;top:var(--line,-10px);border-top:1px dashed var(--mu);opacity:.6}
+.ybars button{flex:1;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px}
+.ybars i{display:block;width:100%;max-width:18px;background:var(--btn);border-radius:4px 4px 2px 2px;min-height:2px}
+.ybars i.over{background:#E0607E}
+.ybars span{font-size:10px;color:var(--mu)}
+/* V2.13: cycle */
+.ring{position:relative;width:220px;height:220px;margin:0 auto}
+.ring svg{width:100%;height:100%}
+.ring .rc{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.ring .rn{font-size:54px;font-weight:300;letter-spacing:-.04em;line-height:1}
+ul.cyl{margin:6px 0 0;padding-left:18px;font-size:13px;line-height:1.55;color:var(--fg2);font-weight:300}
+.cdot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:0}
+.cycal button{position:relative}
+.cycal button.per span{background:#E0607E;color:#fff;border-radius:50%}
+.cycal button.pred span{box-shadow:inset 0 0 0 1.5px #E0607E;border-radius:50%;color:#E0607E}
+.cycal button.ov span{background:#7FB98F;color:#fff;border-radius:50%}
+.cycal button.fert span{box-shadow:inset 0 0 0 1.5px #7FB98F;border-radius:50%}
+.cycal button span{display:inline-flex;width:30px;height:30px;align-items:center;justify-content:center}
+.cycal .dotlog{position:absolute;bottom:1px;left:50%;transform:translateX(-50%);width:4px;height:4px;border-radius:50%;background:var(--fg2)}
+.ckey{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;font-size:11px;color:var(--mu)}
+.ckey .k{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:-1px}
+.k.per{background:#E0607E}.k.pred{box-shadow:inset 0 0 0 1.5px #E0607E}.k.ov{background:#7FB98F}.k.fert{box-shadow:inset 0 0 0 1.5px #7FB98F}
+.cyear{display:grid;grid-template-columns:repeat(3,1fr);gap:14px 10px}
+.cyear .ym{font-size:12px;font-weight:500;text-align:center;margin-bottom:4px}
+.cmini{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;font-size:8.5px;text-align:center;color:var(--fg2)}
+.cmini i{font-style:normal;line-height:14px;border-radius:50%}
+.cmini i.per{background:#E0607E;color:#fff}.cmini i.pred{box-shadow:inset 0 0 0 1px #E0607E;color:#E0607E}.cmini i.ov{background:#7FB98F;color:#fff}.cmini i.td{font-weight:700;color:var(--fg)}

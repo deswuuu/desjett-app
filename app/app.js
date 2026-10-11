@@ -177,7 +177,7 @@ function render(){
   const app = $('#app'); const s = D.settings();
   if (!s.setup) return renderSetup(app);
   if (!D.me()) return renderWho(app);
-  const R = { notify: renderNotify, chat: renderChat, howto: renderHowto, gcal: renderGcal, cat: renderCategory, home: renderHome, trips: renderTrips, trip: renderTrip, days: renderDays, budget: renderBudget, photos: renderPhotos, day: renderDay, calendar: renderCalendar, profile: renderProfile, memories: renderMemories, between: renderBetween, emails: renderEmails, moments: renderMoments, lists: renderLists, list: renderList, wall: renderWall, songs: renderSongs, map: renderMap, import: renderImport };
+  const R = { notify: renderNotify, chat: renderChat, howto: renderHowto, gcal: renderGcal, cat: renderCategory, home: renderHome, trips: renderTrips, trip: renderTrip, days: renderDays, budget: renderBudget, photos: renderPhotos, day: renderDay, calendar: renderCalendar, profile: renderProfile, memories: renderMemories, between: renderBetween, emails: renderEmails, moments: renderMoments, lists: renderLists, list: renderList, wall: renderWall, money: renderMoney, cycle: renderCycle, songs: renderSongs, map: renderMap, import: renderImport };
   (needsWhatsNew() ? renderWhatsNew : (R[route.name] || renderHome))(app);
   bind(app); bindHold(app); updateBadge();
 }
@@ -285,6 +285,7 @@ function renderHome(app){
     ${onThisDayHTML()}
     ${soon != null && soon >= 1 && soon <= 7 ? `<button class="glass pill row tap" style="display:flex" data-act="birthdaySheet|${other.id},${soonDate}"><span class="l">${esc(other.name)}'s birthday ${soon === 1 ? 'tomorrow' : 'in ' + soon + ' days'}</span><span style="font-size:13px;font-weight:500">${soonGift ? 'present wrapped ✓' : 'wrap a present ›'}</span></button>` : ''}
     <button class="glass pill row tap" style="display:flex" data-go="between"><span class="l">${MONTHS[now.getMonth()]} budget</span><span style="font-size:13px;font-weight:500">${money(D.envelopeMonthly())}</span></button>
+    ${cycleHomeHTML()}
     <button class="glass pill row tap" style="display:flex" data-go="lists"><span class="l">Things to do together</span><span style="font-size:13px;font-weight:500">${(() => { const n = D.listItems().filter(i => !i.done).length; return n ? n + ' on the list ›' : 'start a list ›'; })()}</span></button>
     <div class="l">Recent memories</div>
     <div class="feed" style="margin-top:-8px">${recent.length ? recent.map(momentRow).join('') : '<div class="empty">Nothing yet. Tap + to add a moment.</div>'}</div>
@@ -1022,7 +1023,7 @@ function renderProfile(app){
     <div class="glass"><div class="row"><span style="font-size:13.5px">Photos</span><div class="seg" style="width:150px"><button class="${s.photoStyle==='polaroid'?'on':''}" data-act="photoStyle|polaroid">Polaroid</button><button class="${s.photoStyle==='clean'?'on':''}" data-act="photoStyle|clean">Clean</button></div></div></div>
     <div class="glass"><div class="row"><span style="font-size:13.5px">Sky</span><div class="seg" style="width:200px"><button class="${(s.sky||'auto')==='auto'?'on':''}" data-act="sky|auto">Follow</button><button class="${s.sky==='light'?'on':''}" data-act="sky|light">Light</button><button class="${s.sky==='dark'?'on':''}" data-act="sky|dark">Dark</button></div></div></div>
     <div class="glass"><div class="row"><span style="font-size:13.5px">Where I am</span><select class="in" style="width:auto;padding:6px 10px;font-size:12px" data-act="myCity" data-on="change">${Object.keys(CITIES).map(c => `<option ${me.city===c?'selected':''}>${c}</option>`).join('')}</select></div></div>
-    <div class="list" style="font-size:13.5px"><div class="row"><span>Together since</span><input class="in" type="date" value="${esc(s.anniversary||'')}" data-act="anniEdit" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div><div class="row"><span>My birthday</span><input class="in" type="date" value="${esc(me.birthday||'')}" data-act="bdayEdit|${me.id}" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div>${D.other() ? `<div class="row"><span>${esc(D.other().name)}'s birthday</span><input class="in" type="date" value="${esc(D.other().birthday||'')}" data-act="bdayEdit|${D.other().id}" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div>` : ''}<button class="row" data-go="gcal"><span>Google Calendar</span><span class="l">${(me.icsUrls||[]).length ? 'live · ' + me.icsUrls.length : 'connect'} ›</span></button><button class="row" data-go="emails"><span>Trip emails</span><span class="l">›</span></button><button class="row" data-go="notify"><span>Notifications</span><span class="l">${pushState.on ? 'on' : 'off'} ›</span></button><button class="row" data-go="chat"><span>Chat</span><span class="l">${D.bubbles().length} ›</span></button><button class="row" data-act="howto"><span>How it works</span><span class="l">›</span></button><button class="row" data-act="whatsNew"><span>What's new</span><span class="l">v${APP_VERSION} ›</span></button><button class="row" data-act="exportAll"><span>Export everything</span><span class="l">backup ›</span></button><button class="row" data-act="importAll"><span>Restore a backup</span><span class="l">›</span></button>
+    <div class="list" style="font-size:13.5px"><div class="row"><span>Together since</span><input class="in" type="date" value="${esc(s.anniversary||'')}" data-act="anniEdit" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div><div class="row"><span>My birthday</span><input class="in" type="date" value="${esc(me.birthday||'')}" data-act="bdayEdit|${me.id}" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div>${D.other() ? `<div class="row"><span>${esc(D.other().name)}'s birthday</span><input class="in" type="date" value="${esc(D.other().birthday||'')}" data-act="bdayEdit|${D.other().id}" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div>` : ''}<button class="row" data-go="gcal"><span>Google Calendar</span><span class="l">${(me.icsUrls||[]).length ? 'live · ' + me.icsUrls.length : 'connect'} ›</span></button><button class="row" data-go="emails"><span>Trip emails</span><span class="l">›</span></button><button class="row" data-go="notify"><span>Notifications</span><span class="l">${pushState.on ? 'on' : 'off'} ›</span></button><button class="row" data-go="chat"><span>Chat</span><span class="l">${D.bubbles().length} ›</span></button><button class="row" data-go="money"><span>My money</span><span class="l">only you ›</span></button><button class="row" data-go="cycle"><span>Cycle</span><span class="l">›</span></button><button class="row" data-act="howto"><span>How it works</span><span class="l">›</span></button><button class="row" data-act="whatsNew"><span>What's new</span><span class="l">v${APP_VERSION} ›</span></button><button class="row" data-act="exportAll"><span>Export everything</span><span class="l">backup ›</span></button><button class="row" data-act="importAll"><span>Restore a backup</span><span class="l">›</span></button>
     ${Store.mode === 'supabase' ? `<button class="row" data-act="${Store.user?'signout':'signinSheet'}"><span>${Store.user ? 'Signed in · ' + esc(Store.user.email) : 'Sign in to sync'}</span><span class="l">›</span></button>` : `<div class="row"><span>Sync</span><span class="l">local only · add Supabase keys</span></div>`}
     <button class="row" data-act="switchUser"><span>Switch person</span><span class="l">›</span></button><button class="row" data-act="resetAll"><span class="muted">Start over</span><span class="l">›</span></button></div>
   </div>${nav('')}`;
@@ -1623,7 +1624,7 @@ ACT.impSave = async () => {
   toast(made + ' memor' + (made === 1 ? 'y' : 'ies') + ' added'); if (tripId) go('days', { id: tripId }); else go('memories');
 };
 // the + on Home: one memory, or a pile of photos
-ACT.homeAdd = () => openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Add</span></div><div class="list" style="font-size:13.5px">${rowBtn('newMoment', 'New memory', 'A message, photos, voice, song or cost')}${rowBtn('importStart', 'Import photos', 'A pile of photos, sorted into days and moments')}${rowBtn('tripAdd', 'New trip', 'City and dates, or from a booking')}${rowBtn('bookingSheet', 'Add a booking', 'Tickets, reservations, flights, stays — from the email or PDF')}</div>`);
+ACT.homeAdd = () => openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Add</span></div><div class="list" style="font-size:13.5px">${rowBtn('newMoment', 'New memory', 'A message, photos, voice, song or cost')}${rowBtn('importStart', 'Import photos', 'A pile of photos, sorted into days and moments')}${rowBtn('tripAdd', 'New trip', 'City and dates, or from a booking')}${rowBtn('bookingSheet', 'Add a booking', 'Tickets, reservations, flights, stays — from the email or PDF')}${rowBtn('spendNew', 'Log my spending', 'My money — only you see it')}</div>`);
 
 // ---------- V2.9: export everything / restore ----------
 // One zip: every photo, voice note, chat photo and sticker in folders by date, readable text files,
@@ -1635,6 +1636,7 @@ function exportScope(){ const me = D.me().id; const hide = new Set();
   Store.all('trips').forEach(t => { if (t.occasion && t.secret && t.authorId && t.authorId !== me) hide.add(t.id); });
   Store.all('moments').forEach(m => { if ((m.kind === 'plan' && m.hidden && m.authorId && m.authorId !== me) || hide.has(m.tripId)) hide.add(m.id); });
   ['push', 'pushtest', 'pushlog'].forEach(c => Store.all(c).forEach(x => hide.add(x.id)));
+  ['spend', 'money', 'goals'].forEach(c => Store.all(c).forEach(x => { if (x.by !== me) hide.add(x.id); }));
   return hide; }
 function exportCounts(){ const hide = exportScope(); const ms = Store.all('moments').filter(m => !hide.has(m.id));
   return { photos: ms.reduce((s, m) => s + (m.photos||[]).length, 0), voices: ms.reduce((s, m) => s + D.voices(m).length, 0), chat: D.bubbles().filter(b => b.photo).length, stickers: D.stickers().length, memories: ms.filter(m => m.kind === 'moment').length, trips: D.trips().length }; }
@@ -1689,8 +1691,247 @@ ACT.importAll = () => { const f = document.createElement('input'); f.type = 'fil
     } else { const n = await Store.importJSON(await file.text()); toast(`Restored ${n} record${n === 1 ? '' : 's'}`); }
     render(); } catch (e) { toast('Couldn\'t restore: ' + e.message); } }; f.click(); };
 
+// ---------- V2.13: My money (a personal budget for everything; only you see yours) ----------
+const MONEY_CATS = [['home', 'Home & rent'], ['groceries', 'Groceries'], ['eating', 'Eating out'], ['transport', 'Transport'], ['bills', 'Bills & phone'], ['subs', 'Subscriptions'], ['shopping', 'Shopping'], ['health', 'Health & beauty'], ['fun', 'Fun'], ['gifts', 'Gifts & us'], ['travel', 'Travel'], ['other', 'Other']];
+const TOGETHER = { key: 'together', label: 'Together (from the app)' };
+function moneyCfg(){ const me = D.me(); const c = Store.get('money', 'money_' + me.id); return Object.assign({ id: 'money_' + me.id, by: me.id, cats: MONEY_CATS.map(([key, label]) => ({ key, label, limit: 0 })), income: 0, recurring: [], together: true }, c || {}); }
+const saveMoneyCfg = c => Store.put('money', c);
+const monthKey = d => d.slice(0, 7);
+// every line for one month: what you logged, your recurring bills, and (if on) your share of shared costs in the app
+function moneyLines(ym){ const me = D.me(); const cfg = moneyCfg(); const out = [];
+  Store.all('spend').filter(s => s.by === me.id && monthKey(s.date) === ym).forEach(s => out.push({ kind: 'spend', id: s.id, date: s.date, amount: +s.amount || 0, cat: s.cat || 'other', label: s.label || '', note: s.note || '', receipt: s.receipt }));
+  const [y, mo] = ym.split('-').map(Number); const last = new Date(y, mo, 0).getDate();
+  (cfg.recurring || []).forEach(r => { if (r.since && r.since > ym) return; if ((r.skip || []).includes(ym)) return; const day = Math.min(last, +r.day || 1); const dt = ym + '-' + String(day).padStart(2, '0'); if (dt > today()) return; out.push({ kind: 'recurring', id: r.id, date: ym + '-' + String(day).padStart(2, '0'), amount: +r.amount || 0, cat: r.cat || 'bills', label: r.label || 'Monthly' }); });
+  if (cfg.together) D.moments().forEach(m => { if (monthKey(m.date) !== ym) return; D.costLines(m).forEach(c => { const share = D.shareOf(c, me.id); if (share > 0.004) { const t = m.tripId ? D.trip(m.tripId) : null; out.push({ kind: 'together', id: m.id + ':' + c.i, date: m.date, amount: Math.round(share * 100) / 100, cat: 'together', label: (c.label || (m.flight ? flightLabel(m) : m.text || m.title || 'Shared cost')) + (t ? ' · ' + t.city : ''), mid: m.id }); } }); });
+  return out.sort((a, b) => b.date.localeCompare(a.date)); }
+function moneyCats(){ const cfg = moneyCfg(); return cfg.cats.concat(cfg.together ? [Object.assign({ limit: 0 }, TOGETHER)] : []); }
+const catName = key => (moneyCats().find(c => c.key === key) || { label: key === 'together' ? TOGETHER.label : 'Other' }).label;
+let moneyMonth = null, moneyView = 'month';
+function renderMoney(app){
+  const me = D.me(); const cfg = moneyCfg(); if (!moneyMonth) moneyMonth = today().slice(0, 7);
+  const [y, mo] = moneyMonth.split('-').map(Number); const prev = new Date(y, mo - 2, 1), next = new Date(y, mo, 1);
+  const seg = `<div class="seg"><button class="${moneyView === 'month' ? 'on' : ''}" data-act="moneyView|month">Month</button><button class="${moneyView === 'year' ? 'on' : ''}" data-act="moneyView|year">Year</button></div>`;
+  if (moneyView === 'year') return renderMoneyYear(app, seg);
+  const lines = moneyLines(moneyMonth); const spent = lines.reduce((s, l) => s + l.amount, 0); const cats = moneyCats(); const budget = cfg.cats.reduce((s, c) => s + (+c.limit || 0), 0);
+  const byCat = {}; lines.forEach(l => byCat[l.cat] = (byCat[l.cat] || 0) + l.amount);
+  const prevSpent = moneyLines(isoDate(prev).slice(0, 7)).reduce((s, l) => s + l.amount, 0);
+  const goals = Store.all('goals').filter(g => g.by === me.id);
+  const rows = cats.filter(c => byCat[c.key] || +c.limit).map(c => { const v = byCat[c.key] || 0, lim = +c.limit || 0; const pct = lim ? Math.min(100, v / lim * 100) : 0; const near = lim && v >= lim * .85; return `<button class="mrow" data-act="moneyCat|${c.key}"><div class="row"><span>${esc(c.label)}</span><span><b>${money2(v)}</b>${lim ? `<span class="l"> of ${money(lim)}</span>` : ''}</span></div>${lim ? `<div class="mbar ${v > lim ? 'over' : near ? 'near' : ''}"><i style="width:${pct}%"></i></div>` : ''}</button>`; }).join('');
+  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="profile">‹ Profile</button><span>${palOf(me.id)} only you see this</span></div><h1 class="hd">My money</h1>${seg}
+    <div class="monthnav"><button class="l" data-act="moneyNav|-1">‹ ${MON[prev.getMonth()]}</button><span class="hd md">${MONTHS[mo - 1]}</span><button class="l" data-act="moneyNav|1">${MON[next.getMonth()]} ›</button></div>
+    <div class="glass"><div class="row"><div><div class="l">Spent</div><div class="num">${money(spent)}</div></div><div style="text-align:right"><div class="l">${budget ? 'Budget' : 'No budget set'}</div><div class="num" style="color:var(--mu)">${budget ? money(budget) : '—'}</div></div></div>
+      ${budget ? `<div class="mbar big ${spent > budget ? 'over' : spent > budget * .85 ? 'near' : ''}" style="margin-top:10px"><i style="width:${Math.min(100, spent / budget * 100)}%"></i></div><div class="l" style="margin-top:6px">${spent <= budget ? money(budget - spent) + ' left' : money(spent - budget) + ' over'}${prevSpent ? ' · ' + (spent >= prevSpent ? '▲ ' : '▼ ') + money(Math.abs(spent - prevSpent)) + ' vs ' + MON[prev.getMonth()] : ''}</div>` : `<button class="l" style="margin-top:8px" data-act="moneyCats">Set limits per category ›</button>`}
+      ${+cfg.income ? `<div class="row" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--ln)"><span class="l">Income ${money(cfg.income)}</span><span style="font-weight:500">${money(cfg.income - spent)} left after spending</span></div>` : ''}</div>
+    <button class="btn block" data-act="spendNew">+ Add spending</button>
+    <div class="list" style="font-size:13.5px">${rows || '<div class="empty" style="padding:8px 0">Nothing yet this month.</div>'}</div>
+    ${goals.length || true ? `<div class="row" style="margin-top:4px"><span class="l">Saving for</span><button class="l" data-act="goalNew">+ Goal</button></div>${goals.map(g => { const saved = (g.deposits || []).reduce((s, d) => s + (+d.amount || 0), 0); const t = g.tripId && D.trip(g.tripId); return `<div class="glass" style="padding:12px 14px"><div class="row"><span style="font-weight:500">${esc(g.name)}${t ? ` <span class="l">· ${fmtD(t.start)}</span>` : ''}</span><span class="l">${money(saved)} of ${money(g.target)}</span></div><div class="mbar" style="margin-top:8px"><i style="width:${Math.min(100, g.target ? saved / g.target * 100 : 0)}%"></i></div><div class="row" style="margin-top:8px"><span class="l">${saved >= g.target ? 'done ♡' : money(Math.max(0, g.target - saved)) + ' to go'}${t && t.start > today() ? ' · ' + daysBetween(today(), t.start) + ' days' : ''}</span><span style="display:flex;gap:8px"><button class="l" data-act="goalEdit|${g.id}">edit</button><button class="chip" data-act="goalAdd|${g.id}">+ Add money</button></span></div></div>`; }).join('') || '<div class="l">A trip, a present, anything — put money aside as you go.</div>'}` : ''}
+    <div class="list" style="font-size:13.5px;margin-top:6px"><button class="row" data-act="moneyCats"><span>Categories & limits</span><span class="l">${cfg.cats.length} ›</span></button><button class="row" data-act="moneyRecurring"><span>Every month</span><span class="l">${(cfg.recurring || []).length ? (cfg.recurring || []).length + ' · ' + money((cfg.recurring || []).reduce((s, r) => s + (+r.amount || 0), 0)) : 'rent, phone…'} ›</span></button><button class="row" data-act="moneyIncome"><span>Income</span><span class="l">${+cfg.income ? money(cfg.income) + '/month' : 'optional'} ›</span></button><div class="row"><span>Include my share of shared costs</span><button class="tog ${cfg.together ? '' : 'off'}" data-act="moneyTogether"></button></div><button class="row" data-act="moneyExport"><span>Export to Excel</span><span class="l">›</span></button></div>
+  </div>${nav('')}`;
+}
+function renderMoneyYear(app, seg){
+  const me = D.me(); const y = +moneyMonth.slice(0, 4); const months = Array.from({ length: 12 }, (_, i) => `${y}-${String(i + 1).padStart(2, '0')}`);
+  const tot = months.map(ym => moneyLines(ym).reduce((s, l) => s + l.amount, 0)); const max = Math.max(1, ...tot); const cfg = moneyCfg(); const budget = cfg.cats.reduce((s, c) => s + (+c.limit || 0), 0);
+  const byCat = {}; months.forEach(ym => moneyLines(ym).forEach(l => byCat[l.cat] = (byCat[l.cat] || 0) + l.amount)); const sum = tot.reduce((a, b) => a + b, 0); const n = tot.filter(Boolean).length;
+  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="profile">‹ Profile</button><span>${palOf(me.id)} only you see this</span></div><h1 class="hd">My money</h1>${seg}
+    <div class="monthnav"><button class="l" data-act="moneyYear|-1">‹ ${y - 1}</button><span class="hd md">${y}</span><button class="l" data-act="moneyYear|1">${y + 1} ›</button></div>
+    <div class="glass"><div class="row"><div><div class="l">Spent in ${y}</div><div class="num">${money(sum)}</div></div><div style="text-align:right"><div class="l">Monthly average</div><div class="num" style="color:var(--mu)">${money(n ? sum / n : 0)}</div></div></div>
+      <div class="ybars">${tot.map((v, i) => `<button data-act="moneyPick|${months[i]}"><i class="${budget && v > budget ? 'over' : ''}" style="height:${Math.round(v / max * 100)}%"></i><span>${MON[i][0]}</span></button>`).join('')}</div>${budget ? `<div class="l" style="margin-top:6px">Line = your monthly budget (${money(budget)})</div>` : ''}</div>
+    <div class="list" style="font-size:13.5px">${Object.keys(byCat).sort((a, b) => byCat[b] - byCat[a]).map(k => `<div class="row"><span>${esc(catName(k))}</span><span><b>${money(byCat[k])}</b> <span class="l">· ${Math.round(byCat[k] / Math.max(1, sum) * 100)}%</span></span></div>`).join('') || '<div class="empty">Nothing this year yet.</div>'}</div>
+  </div>${nav('')}`;
+  if (budget) { const el = app.querySelector('.ybars'); if (el) el.style.setProperty('--line', (100 - Math.min(100, budget / max * 100)) + '%'); }
+}
+ACT.moneyView = v => { moneyView = v; render(); };
+ACT.moneyNav = d => { const [y, m] = moneyMonth.split('-').map(Number); moneyMonth = isoDate(new Date(y, m - 1 + +d, 1)).slice(0, 7); render(); };
+ACT.moneyYear = d => { moneyMonth = (+moneyMonth.slice(0, 4) + +d) + moneyMonth.slice(4); render(); };
+ACT.moneyPick = ym => { moneyMonth = ym; moneyView = 'month'; render(); };
+ACT.moneyTogether = async () => { const c = moneyCfg(); c.together = !c.together; await saveMoneyCfg(c); render(); };
+ACT.moneyIncome = async () => { const c = moneyCfg(); const v = await ask('Monthly income', { sub: 'Optional — shows what\'s left after spending', input: c.income ? String(c.income) : '', ok: 'Save' }); if (v == null) return; c.income = +v.replace(/[^\d.]/g, '') || 0; await saveMoneyCfg(c); render(); };
+// one category: every line in it this month
+ACT.moneyCat = key => { const ls = moneyLines(moneyMonth).filter(l => l.cat === key); const c = moneyCats().find(x => x.key === key) || { label: catName(key) };
+  openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>${MONTHS[+moneyMonth.slice(5) - 1]}</span></div><h2 class="hd md" style="margin:0">${esc(c.label)}</h2><div class="sub" style="text-align:left">${money2(ls.reduce((s, l) => s + l.amount, 0))}${+c.limit ? ' of ' + money(c.limit) : ''}</div>
+    <div class="list" style="font-size:13.5px">${ls.map(l => `<button class="row" data-act="${l.kind === 'spend' ? 'spendEdit|' + l.id : l.kind === 'recurring' ? 'moneyRecurring' : 'moneyGoDay|' + l.mid}"><span style="text-align:left"><div style="font-weight:500">${esc(l.label || c.label)}${l.receipt ? ' 🧾' : ''}</div><div class="l">${fmtD(l.date)}${l.kind === 'recurring' ? ' · every month' : l.kind === 'together' ? ' · your share' : ''}${l.note ? ' · ' + esc(l.note) : ''}</div></span><span>${money2(l.amount)}</span></button>`).join('') || '<div class="empty">Nothing here.</div>'}</div>
+    ${key !== 'together' ? `<button class="btn lite block" data-act="spendNew|${key}">+ Add to ${esc(c.label)}</button>` : ''}`, null, 'tall'); };
+ACT.moneyGoDay = mid => { const m = Store.get('moments', mid); closeSheet(); if (m) go('day', { id: (m.tripId || 'none') + '_' + m.date }); };
+// add / edit one spending entry
+function spendSheet(s, editing){ const cats = moneyCfg().cats; let receiptFile = null;
+  const draw = () => `<div class="bar"><button data-act="closeSheet">Close</button><span>${editing ? 'Edit' : 'New'} · only you see this</span></div>
+    <div class="row"><span style="display:flex;align-items:center"><span class="num" style="font-size:34px">$</span><input class="in money" id="s-amt" type="number" inputmode="decimal" placeholder="0" value="${s.amount || ''}" style="width:170px"></span></div>
+    <input class="in big" id="s-label" placeholder="What was it?" value="${esc(s.label || '')}">
+    <div class="chips">${cats.map(c => `<button class="chip ${s.cat === c.key ? 'on' : ''}" data-act="sCat|${c.key}">${esc(c.label)}</button>`).join('')}</div>
+    <input class="in" id="s-note" placeholder="Note (optional)" value="${esc(s.note || '')}">
+    <div class="row"><input class="in" type="date" id="s-date" value="${s.date}" style="width:auto;padding:8px 10px;font-size:12px"><button class="chip" data-act="sReceipt">${s.receipt || receiptFile ? '🧾 receipt added' : '🧾 Add receipt'}</button></div>${s.receipt ? `<button class="row l" data-act="openAtt|${s.receipt}"><span>View receipt</span><span>›</span></button>` : ''}
+    <input type="file" id="s-file" accept="image/*,application/pdf" hidden data-act="sFile" data-on="change">
+    <div class="row" style="margin-top:auto">${editing ? `<button class="btn sm lite" data-act="sDelete">Delete</button>` : '<span></span>'}<button class="btn sm" data-act="sSave">Save</button></div>`;
+  const keep = () => { const a = $('#s-amt'); if (a) s.amount = a.value === '' ? '' : +a.value; const l = $('#s-label'); if (l) s.label = l.value.trim(); const n = $('#s-note'); if (n) s.note = n.value.trim(); const d = $('#s-date'); if (d && d.value) s.date = d.value; };
+  const redraw = () => { keep(); openSheet(draw(), null, 'tall'); };
+  ACT.sCat = k => { s.cat = k; redraw(); };
+  ACT.sReceipt = () => { keep(); $('#s-file').click(); };
+  ACT.sFile = (a, el) => { receiptFile = el.files && el.files[0]; redraw(); };
+  ACT.sSave = async () => { keep(); if (!+s.amount) return toast('How much?'); if (receiptFile) { if (s.receipt) Store.removeBlob(s.receipt); s.receipt = receiptFile.type.startsWith('image/') ? (await storePhoto(receiptFile)).asset : await Store.putBlob(receiptFile, 'pdf'); }
+    s.id = s.id || Store.uid(); s.by = D.me().id; s.at = s.at || Date.now(); await Store.put('spend', s); moneyMonth = s.date.slice(0, 7); closeSheet(); toast('Saved'); render(); };
+  ACT.sDelete = async () => { if (!await ask('Delete this?', { ok: 'Delete' })) return; if (s.receipt) Store.removeBlob(s.receipt); await Store.remove(s.id); closeSheet(); render(); };
+  openSheet(draw(), () => { const a = $('#s-amt'); if (a && !editing) a.focus(); }, 'tall'); }
+ACT.spendNew = cat => { const d = moneyMonth && moneyMonth !== today().slice(0, 7) ? moneyMonth + '-01' : today(); spendSheet({ date: d, cat: cat || 'other', amount: '' }); };
+ACT.spendEdit = id => { const s = Store.get('spend', id); if (s) spendSheet(JSON.parse(JSON.stringify(s)), true); };
+// categories & limits
+ACT.moneyCats = () => { const c = moneyCfg();
+  openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Categories</span></div><h2 class="hd md" style="margin:0">Categories & limits</h2><div class="sub" style="text-align:left">A monthly limit per category — they add up to your budget. Leave 0 for no limit.</div>
+    <div class="list" style="font-size:13.5px">${c.cats.map((x, i) => `<div class="row"><input class="in" value="${esc(x.label)}" data-act="mcName|${i}" data-on="change" style="background:transparent;border:0;padding:4px 0;font-size:14px;flex:1"><span style="display:flex;align-items:center;gap:4px">$<input class="in" type="number" inputmode="decimal" value="${+x.limit || ''}" placeholder="0" data-act="mcLimit|${i}" data-on="change" style="width:80px;padding:5px 8px;font-size:13px;text-align:right"><button class="l" style="padding:4px 2px 4px 8px" data-act="mcDel|${i}">✕</button></span></div>`).join('')}</div>
+    <button class="btn lite block" data-act="mcAdd">+ Add a category</button><div class="row"><span class="l">Budget</span><b>${money(c.cats.reduce((s, x) => s + (+x.limit || 0), 0))} / month</b></div>`, null, 'tall'); };
+const mcSave = async fn => { const c = moneyCfg(); fn(c); await saveMoneyCfg(c); ACT.moneyCats(); };
+ACT.mcName = (i, el) => mcSave(c => { c.cats[+i].label = el.value.trim() || c.cats[+i].label; });
+ACT.mcLimit = (i, el) => mcSave(c => { c.cats[+i].limit = +el.value || 0; });
+ACT.mcDel = async i => { const c = moneyCfg(); const x = c.cats[+i]; const used = Store.all('spend').some(s => s.by === D.me().id && s.cat === x.key); if (!await ask('Remove “' + x.label + '”?', { sub: used ? 'Anything already in it moves to Other.' : '', ok: 'Remove' })) return; if (used) await Store.putMany('spend', Store.all('spend').filter(s => s.by === D.me().id && s.cat === x.key).map(s => Object.assign(s, { cat: 'other' }))); if (!c.cats.some(y => y.key === 'other') && used) c.cats.push({ key: 'other', label: 'Other', limit: 0 }); c.cats.splice(+i, 1); await saveMoneyCfg(c); ACT.moneyCats(); };
+ACT.mcAdd = async () => { const name = await ask('Name the category', { input: '', ok: 'Add' }); if (!name) return mcSave(() => {}); mcSave(c => c.cats.push({ key: 'c_' + Store.uid().slice(0, 6), label: name, limit: 0 })); };
+// every month (rent, phone, subscriptions)
+ACT.moneyRecurring = () => { const c = moneyCfg();
+  openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Every month</span></div><h2 class="hd md" style="margin:0">Every month</h2><div class="sub" style="text-align:left">Added to each month on its day, so you don't re-enter them.</div>
+    <div class="list" style="font-size:13.5px">${(c.recurring || []).map((r, i) => `<div class="row" style="flex-wrap:wrap;gap:6px"><input class="in" value="${esc(r.label)}" data-act="mrSet|${i},label" data-on="change" style="flex:1;min-width:120px;padding:5px 8px;font-size:13px"><span style="display:flex;align-items:center;gap:4px">$<input class="in" type="number" inputmode="decimal" value="${+r.amount || ''}" data-act="mrSet|${i},amount" data-on="change" style="width:72px;padding:5px 8px;font-size:13px;text-align:right"></span><select class="in" data-act="mrSet|${i},cat" data-on="change" style="width:auto;padding:5px 8px;font-size:12px">${c.cats.map(x => `<option value="${x.key}" ${x.key === r.cat ? 'selected' : ''}>${esc(x.label)}</option>`).join('')}</select><span class="l" style="display:flex;align-items:center;gap:4px">day<input class="in" type="number" min="1" max="31" value="${+r.day || 1}" data-act="mrSet|${i},day" data-on="change" style="width:52px;padding:5px 6px;font-size:12px"></span><button class="l" data-act="mrDel|${i}">✕</button></div>`).join('') || '<div class="empty" style="padding:8px 0">Nothing yet.</div>'}</div>
+    <button class="btn lite block" data-act="mrAdd">+ Add one</button>`, null, 'tall'); };
+const mrSave = async fn => { const c = moneyCfg(); c.recurring = c.recurring || []; fn(c); await saveMoneyCfg(c); ACT.moneyRecurring(); };
+ACT.mrSet = (arg, el) => { const [i, k] = arg.split(','); mrSave(c => { c.recurring[+i][k] = k === 'amount' || k === 'day' ? +el.value || 0 : el.value; }); };
+ACT.mrDel = i => mrSave(c => c.recurring.splice(+i, 1));
+ACT.mrAdd = async () => { const label = await ask('What is it?', { input: '', placeholder: 'Rent, phone, Spotify…', ok: 'Next' }); if (!label) return; const amt = await ask('How much each month?', { input: '', ok: 'Add' }); if (amt == null) return; mrSave(c => c.recurring.push({ id: Store.uid(), label, amount: +amt.replace(/[^\d.]/g, '') || 0, cat: /rent|mortgage/i.test(label) ? 'home' : /spotify|netflix|apple|disney|prime|youtube/i.test(label) ? 'subs' : 'bills', day: 1, since: today().slice(0, 7) })); };
+// savings goals
+ACT.goalNew = () => goalSheet({ name: '', target: '', tripId: '' });
+ACT.goalEdit = id => goalSheet(JSON.parse(JSON.stringify(Store.get('goals', id))), true);
+function goalSheet(g, editing){ const trips = D.trips().filter(t => t.end >= today());
+  openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Saving for</span></div><input class="in big" id="g-name" placeholder="Toronto in December, a present…" value="${esc(g.name)}"><div class="row"><span>Target</span><span style="display:flex;align-items:center;gap:4px">$<input class="in" id="g-target" type="number" inputmode="decimal" value="${g.target || ''}" style="width:110px;padding:6px 8px;font-size:14px;text-align:right"></span></div>
+    <div class="row"><span>For a trip</span><select class="in" id="g-trip" style="width:auto;padding:6px 10px;font-size:12px"><option value="">—</option>${trips.map(t => `<option value="${t.id}" ${t.id === g.tripId ? 'selected' : ''}>${esc(t.city)} · ${fmtD(t.start)}</option>`).join('')}</select></div>
+    <div class="row" style="margin-top:auto">${editing ? `<button class="btn sm lite" data-act="goalDel|${g.id}">Delete</button>` : '<span></span>'}<button class="btn sm" data-act="goalSave">Save</button></div>`);
+  ACT.goalSave = async () => { g.name = $('#g-name').value.trim(); g.target = +$('#g-target').value || 0; g.tripId = $('#g-trip').value; if (!g.name || !g.target) return toast('A name and a target, please'); g.id = g.id || Store.uid(); g.by = D.me().id; g.deposits = g.deposits || []; await Store.put('goals', g); closeSheet(); render(); }; }
+ACT.goalDel = async id => { if (!await ask('Delete this goal?', { ok: 'Delete' })) return; await Store.remove(id); closeSheet(); render(); };
+ACT.goalAdd = async id => { const g = Store.get('goals', id); const v = await ask('Put aside', { sub: g.name, input: '', placeholder: '$', ok: 'Add' }); if (!v) return; const n = +v.replace(/[^\d.-]/g, ''); if (!n) return; g.deposits = (g.deposits || []).concat([{ at: Date.now(), amount: n }]); await Store.put('goals', g); render(); };
+ACT.moneyExport = () => { if (!window.XLSX) return toast('Excel library didn\'t load'); const y = moneyMonth.slice(0, 4); const wb = XLSX.utils.book_new();
+  for (let i = 1; i <= 12; i++) { const ym = y + '-' + String(i).padStart(2, '0'); const ls = moneyLines(ym); if (!ls.length) continue; const rows = [['Date', 'What', 'Category', 'Amount', 'Kind', 'Note']].concat(ls.map(l => [l.date, l.label, catName(l.cat), l.amount, l.kind === 'together' ? 'your share' : l.kind === 'recurring' ? 'every month' : '', l.note || ''])); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), MON[i - 1]); }
+  if (!wb.SheetNames.length) return toast('Nothing to export yet'); download(new Blob([XLSX.write(wb, { bookType: 'xlsx', type: 'array' })]), `my-money-${y}.xlsx`); };
+
+// ---------- V2.13: cycle tracker (Des's; Jett can see the phase, the day and the tracker) ----------
+// Period days are one record each ("pd_2026-10-02"); a day's log is "cl_2026-10-02". Periods are runs of days.
+const PHASES = {
+  menstrual: { name: 'Menstrual', color: '#E0607E', hormones: 'Estrogen and progesterone are at their lowest. The uterine lining sheds; prostaglandins make the uterus contract.',
+    feel: ['Cramps and lower-back ache, usually worst on days 1–2 (prostaglandins)', 'Lower energy, wanting more sleep; some get headaches', 'Iron is lost with bleeding — tiredness can linger if you run low', 'Mood often lifts as bleeding eases and estrogen starts to rise'],
+    help: ['Heat on the belly or back; ibuprofen works on prostaglandins', 'Gentle movement (walks, stretching) can ease cramps', 'Iron-rich food (red meat, lentils, spinach) with vitamin C'] },
+  follicular: { name: 'Follicular', color: '#E9B872', hormones: 'FSH grows follicles in the ovary, which make estrogen — it rises steadily through this phase.',
+    feel: ['Energy, motivation and mood usually climb', 'Often the best days for focus, learning and social plans', 'Skin tends to be clearer; appetite steadier', 'Insulin sensitivity is higher — harder workouts often feel easier'],
+    help: ['A good time for new things and tougher training', 'Plans that need energy fit here'] },
+  ovulatory: { name: 'Ovulation', color: '#7FB98F', hormones: 'Estrogen peaks and triggers an LH surge; about a day later an egg is released. Testosterone rises a little too.',
+    feel: ['Libido and confidence often at their highest', 'Clear, stretchy discharge (like egg white) near the peak', 'Some feel a one-sided twinge low in the belly (mittelschmerz)', 'Body temperature rises ~0.2–0.5 °C after ovulation and stays up'],
+    help: ['The most fertile days are the ~5 before ovulation and the day itself', 'Predictions are estimates — not reliable as birth control'] },
+  luteal: { name: 'Luteal', color: '#9C86C4', hormones: 'The emptied follicle (corpus luteum) makes progesterone, which rises and calms, warms and slows things down. Estrogen has a second, smaller rise.',
+    feel: ['Calmer, sleepier, more inward; body runs slightly warmer', 'Appetite and cravings go up — your body burns a little more', 'Bloating, breast tenderness and water retention are common', 'In the last ~5 days both hormones fall: PMS — irritability, low mood, poorer sleep, acne'],
+    help: ['Regular meals with protein and complex carbs steady cravings', 'Magnesium-rich food, less salt and caffeine can ease bloating and tenderness', 'Lighter plans and early nights in the last few days'] },
+};
+const SYMPTOMS = ['cramps', 'back pain', 'headache', 'bloating', 'tender breasts', 'acne', 'tired', 'energised', 'cravings', 'anxious', 'irritable', 'low', 'happy', 'calm', 'high libido', 'spotting', 'poor sleep', 'nausea'];
+const PAST_PERIODS = [['2026-05-31', '2026-06-04'], ['2026-06-29', '2026-07-01'], ['2026-07-30', '2026-08-01'], ['2026-08-27', '2026-08-31'], ['2026-10-02', '2026-10-04']];
+const cycOwner = () => D.settings().cycleOwner || '';
+const meanOf = a => a.reduce((s, x) => s + x, 0) / (a.length || 1);
+function cycleData(){
+  const owner = cycOwner(); const days = Store.all('pday').filter(p => p.by === owner).map(p => p.date).sort();
+  const periods = []; days.forEach(d => { const last = periods[periods.length - 1]; if (last && daysBetween(last.end, d) <= 2) last.end = d; else periods.push({ start: d, end: d }); });
+  const starts = periods.map(p => p.start); const lens = []; for (let i = 1; i < starts.length; i++) { const l = daysBetween(starts[i - 1], starts[i]); if (l >= 15 && l <= 60) lens.push(l); }
+  const recent = lens.slice(-6); const avg = recent.length ? meanOf(recent) : 28; const sd = recent.length > 1 ? Math.sqrt(meanOf(recent.map(l => (l - avg) ** 2))) : 2;
+  const plens = periods.slice(-6).map(p => daysBetween(p.start, p.end) + 1); const plen = plens.length ? Math.round(meanOf(plens)) : 5;
+  const L = Math.round(avg); const spread = Math.max(1, Math.min(5, Math.round(sd)));
+  const last = periods[periods.length - 1] || null;
+  // the next few cycles, predicted from your average; the first one carries a range
+  const preds = []; if (last) { for (let k = 1; k <= 14; k++) { const s = addDays(last.start, L * k); preds.push({ start: s, end: addDays(s, plen - 1), from: addDays(s, -spread * Math.min(k, 2)), to: addDays(s, spread * Math.min(k, 2)), ov: addDays(s, -14) }); } }
+  return { owner, days: new Set(days), periods, lens, avg, sd, L, plen, spread, last, preds, min: lens.length ? Math.min(...recent) : null, max: lens.length ? Math.max(...recent) : null };
+}
+// where a date sits: cycle day, phase, and whether it's actual or predicted
+function cycleAt(c, d){
+  if (!c.last) return null;
+  const td = today(); const actualStarts = c.periods.map(p => p.start); const allStarts = actualStarts.concat(c.preds.map(p => p.start).filter(s => s > td));
+  let s = null, next = null; for (let i = 0; i < allStarts.length; i++) { if (allStarts[i] <= d) { s = allStarts[i]; next = allStarts[i + 1] || null; } }
+  if (!s) return null;
+  const actual = actualStarts.includes(s); const per = c.periods.find(p => p.start === s);
+  // past the predicted start with no period yet: the cycle just runs long
+  const late = actual && s === c.last.start && d >= addDays(c.last.start, c.L); if (late) next = null;
+  const len = next ? daysBetween(s, next) : Math.max(c.L, daysBetween(s, d) + 1); const n = daysBetween(s, d) + 1; const ovDay = (next ? daysBetween(s, next) : c.L) - 14;
+  const plen = per ? daysBetween(per.start, per.end) + 1 : c.plen;
+  const phase = n <= plen ? 'menstrual' : n < ovDay - 1 ? 'follicular' : n <= ovDay + 1 ? 'ovulatory' : 'luteal';
+  return { start: s, n, len, phase, ovDay, late: late ? daysBetween(addDays(c.last.start, c.L), d) + 1 : 0, predicted: !actual, lateLuteal: phase === 'luteal' && len - n < 5 };
+}
+// what you've logged, by phase — your own pattern after a couple of cycles
+function cyclePattern(c){ const logs = Store.all('clog').filter(l => l.by === c.owner); if (c.periods.length < 2 || logs.length < 4) return null; const by = {};
+  logs.forEach(l => { const at = cycleAt(c, l.date); if (!at || at.predicted) return; (l.sym || []).forEach(s => { const k = at.phase + '|' + s; by[k] = by[k] || { phase: at.phase, sym: s, days: [] }; by[k].days.push(at.n); }); });
+  return Object.values(by).filter(x => x.days.length >= 2).sort((a, b) => b.days.length - a.days.length).slice(0, 5).map(x => ({ phase: x.phase, text: `${x.sym} — logged ${x.days.length}× (around day ${Math.min(...x.days)}${Math.max(...x.days) !== Math.min(...x.days) ? '–' + Math.max(...x.days) : ''})` })); }
+let cycView = 'day', cycMonth = null;
+function renderCycle(app){
+  const me = D.me(); const owner = cycOwner(); const ou = D.user(owner);
+  if (!owner || !ou) { app.innerHTML = `<div class="screen"><div class="bar"><button data-go="profile">‹ Profile</button><span>Cycle</span></div><h1 class="hd">Cycle</h1><div class="sub" style="text-align:left">Whose cycle is this tracker for? The other person can see the day, the phase and the tracker.</div><div class="pick">${D.users2().map(u => `<button data-act="cycOwner|${u.id}"><i class="pal ${u.pal}"></i>${esc(u.name)}</button>`).join('')}</div></div>${nav('')}`; return; }
+  const mine = owner === me.id; const c = cycleData(); const td = today();
+  const seg = `<div class="seg"><button class="${cycView === 'day' ? 'on' : ''}" data-act="cycView|day">Day</button><button class="${cycView === 'month' ? 'on' : ''}" data-act="cycView|month">Month</button><button class="${cycView === 'year' ? 'on' : ''}" data-act="cycView|year">Year</button></div>`;
+  const head = `<div class="bar"><button data-go="home">‹ Home</button><span>${mine ? 'Your cycle' : esc(ou.name) + '\'s cycle'}</span></div>`;
+  if (!c.last) { app.innerHTML = `<div class="screen">${head}<h1 class="hd">Cycle</h1>${mine ? `<div class="glass"><div style="font-weight:500">Start with your history</div><div class="sub" style="text-align:left;margin-top:4px">Past periods make the predictions accurate. These are the ones from your other app:</div><div class="list" style="font-size:13.5px;margin-top:6px">${PAST_PERIODS.map(([a, b]) => `<div class="row"><span>${fmtD(a)} – ${fmtD(b)}</span><span class="l">${daysBetween(a, b) + 1} days</span></div>`).join('')}</div><button class="btn block" style="margin-top:10px" data-act="cycSeed">Add these</button><button class="row l" style="justify-content:center;margin-top:6px" data-act="cycView|month">or tap your days in yourself</button></div>` : `<div class="empty">${esc(ou.name)} hasn't added anything yet.</div>`}</div>${nav('')}`; if (cycView === 'month' && mine) { /* fall through to month below */ } else return; }
+  let body = '';
+  if (cycView === 'day') {
+    const at = cycleAt(c, td) || { n: 1, phase: 'follicular', len: c.L }; const ph = PHASES[at.phase]; const next = c.preds.find(p => p.start > td) || c.preds[0]; const nextOv = c.preds.map(p => p.ov).concat(c.periods.map(p => addDays(p.start, c.L - 14))).filter(x => x >= td).sort()[0];
+    const todayLog = Store.get('clog', 'cl_' + td); const inPeriod = c.days.has(td);
+    const pattern = cyclePattern(c); const mineHere = pattern ? pattern.filter(x => x.phase === at.phase) : [];
+    body = `${cycleRing(c, at)}
+      <div class="glass"><div class="row"><span style="font-size:18px;font-weight:500">${ph.name}${at.lateLuteal ? ' · late' : ''}</span><span class="chip" style="background:${ph.color};color:#fff;border-color:${ph.color}">day ${at.n}</span></div><div class="sub" style="text-align:left;margin-top:6px">${ph.hormones}</div>
+        ${at.late ? `<div class="l" style="margin-top:8px;color:#E0607E">Period is ${at.late} day${at.late === 1 ? '' : 's'} later than predicted — cycles vary; stress, travel and sleep can shift it.</div>` : ''}
+        <div class="l" style="margin-top:10px">${mine ? 'You might notice' : esc(ou.name) + ' might notice'}</div><ul class="cyl">${ph.feel.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+        ${mineHere.length ? `<div class="l" style="margin-top:8px">${mine ? 'Your' : esc(ou.name) + '\'s'} pattern in this phase</div><ul class="cyl">${mineHere.map(x => `<li>${esc(x.text)}</li>`).join('')}</ul>` : ''}
+        <div class="l" style="margin-top:8px">What helps</div><ul class="cyl">${ph.help.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
+      <div class="list" style="font-size:13.5px"><div class="row"><span>Next period</span><span>${next ? (next.from !== next.to ? fmtD(next.from) + ' – ' + fmtD(next.to) : fmtD(next.start)) + ` <span class="l">· ~${Math.max(0, daysBetween(td, next.start))} days</span>` : '—'}</span></div><div class="row"><span>Ovulation</span><span>${nextOv ? '~' + fmtD(nextOv) + ` <span class="l">· fertile ${fmtD(addDays(nextOv, -5))} – ${fmtD(addDays(nextOv, 1))}</span>` : '—'}</span></div><div class="row"><span>Average cycle</span><span>${Math.round(c.avg)} days${c.min ? ` <span class="l">· ${c.min}–${c.max}</span>` : ''}</span></div><div class="row"><span>Average period</span><span>${c.plen} days</span></div></div>
+      ${mine ? `<div class="row" style="gap:8px">${inPeriod ? `<button class="btn lite" style="flex:1" data-act="cycEnd">Period ended</button>` : `<button class="btn lite" style="flex:1" data-act="cycStart">Period started</button>`}<button class="btn" style="flex:1" data-act="cycLog|${td}">${todayLog ? 'Edit today' : 'Log today'}</button></div>` : todayLog ? `<div class="glass deep" style="font-size:13px"><div class="l">${esc(ou.name)} logged today</div><div style="margin-top:4px">${esc((todayLog.sym || []).join(', ') || '')}${todayLog.note ? ' · ' + esc(todayLog.note) : ''}</div></div>` : ''}
+      <div class="l center">Predictions are estimates from your own history — not for birth control.</div>`;
+  } else if (cycView === 'month') {
+    if (!cycMonth) cycMonth = td.slice(0, 7); const [y, mo] = cycMonth.split('-').map(Number); const prev = new Date(y, mo - 2, 1), nx = new Date(y, mo, 1);
+    body = `<div class="monthnav"><button class="l" data-act="cycNav|-1">‹ ${MON[prev.getMonth()]}</button><span class="hd md">${MONTHS[mo - 1]} ${y !== +td.slice(0, 4) ? y : ''}</span><button class="l" data-act="cycNav|1">${MON[nx.getMonth()]} ›</button></div>${cycMonthGrid(c, y, mo - 1, false)}
+      <div class="ckey"><span><i class="k per"></i>period</span><span><i class="k pred"></i>predicted</span><span><i class="k ov"></i>ovulation</span><span><i class="k fert"></i>fertile</span></div><div class="l center">${mine ? 'Tap a day to mark your period or log how you feel.' : 'Tap a day to see what ' + esc(ou.name) + ' logged.'}</div>`;
+  } else {
+    const y = +(cycMonth || td).slice(0, 4);
+    body = `<div class="monthnav"><button class="l" data-act="cycYear|-1">‹ ${y - 1}</button><span class="hd md">${y}</span><button class="l" data-act="cycYear|1">${y + 1} ›</button></div><div class="cyear">${Array.from({ length: 12 }, (_, m) => `<div><div class="ym">${MONTHS[m]}</div>${cycMonthGrid(c, y, m, true)}</div>`).join('')}</div><div class="ckey"><span><i class="k per"></i>period</span><span><i class="k pred"></i>predicted</span><span><i class="k ov"></i>ovulation</span></div>`;
+  }
+  app.innerHTML = `<div class="screen">${head}${seg}${body}</div>${nav('')}`;
+}
+function cycleRing(c, at){ const L = Math.max(at.len, c.L), R = 92, C = 2 * Math.PI * R; const seg = (a, b, color) => { const s = (a - 1) / L * C, e = (b) / L * C; return `<circle r="${R}" cx="110" cy="110" fill="none" stroke="${color}" stroke-width="14" stroke-dasharray="${Math.max(0, e - s - 2)} ${C}" stroke-dashoffset="${-s}" transform="rotate(-90 110 110)" opacity=".9"/>`; };
+  const ov = (at.ovDay > 0 ? at.ovDay : L - 14); const plen = Math.min(c.plen, L);
+  const pos = (at.n - .5) / L * 2 * Math.PI - Math.PI / 2; const mx = 110 + R * Math.cos(pos), my = 110 + R * Math.sin(pos);
+  return `<div class="ring"><svg viewBox="0 0 220 220">${seg(1, plen, PHASES.menstrual.color)}${seg(plen + 1, ov - 2, PHASES.follicular.color)}${seg(ov - 1, ov + 1, PHASES.ovulatory.color)}${seg(ov + 2, L, PHASES.luteal.color)}<circle cx="${mx}" cy="${my}" r="11" fill="#fff" stroke="#1B1C19" stroke-width="2"/></svg><div class="rc"><div class="l">cycle day</div><div class="rn">${at.n}</div><div class="l">of ~${L}</div></div></div>`; }
+function cycMonthGrid(c, y, m, mini){ const first = new Date(y, m, 1), n = new Date(y, m + 1, 0).getDate(); const td = today(); let cells = mini ? '' : '<div class="h">S</div><div class="h">M</div><div class="h">T</div><div class="h">W</div><div class="h">T</div><div class="h">F</div><div class="h">S</div>';
+  for (let i = 0; i < first.getDay(); i++) cells += '<div></div>';
+  const predDays = new Set(), ovDays = new Set(), fertDays = new Set(); c.preds.forEach(p => { for (let d = p.start; d <= p.end; d = addDays(d, 1)) if (d > td) predDays.add(d); });
+  const ovs = c.periods.slice(1).map(p => addDays(p.start, -14)).concat(c.preds.map(p => p.ov)); ovs.forEach(o => { ovDays.add(o); for (let k = -5; k <= 1; k++) if (k) fertDays.add(addDays(o, k)); });
+  for (let d = 1; d <= n; d++) { const iso = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`; const per = c.days.has(iso), pred = !per && predDays.has(iso), ov = !per && ovDays.has(iso), fert = !per && !ov && fertDays.has(iso) && iso >= td; const lg = !mini && Store.get('clog', 'cl_' + iso);
+    cells += mini ? `<i class="${per ? 'per' : pred ? 'pred' : ov ? 'ov' : ''} ${iso === td ? 'td' : ''}">${d}</i>` : `<button class="${per ? 'per' : pred ? 'pred' : ov ? 'ov' : fert ? 'fert' : ''} ${iso === td ? 'today' : ''}" data-act="cycDay|${iso}"><span>${d}</span>${lg ? '<b class="dotlog"></b>' : ''}</button>`; }
+  return `<div class="${mini ? 'cmini' : 'cal cycal'}">${cells}</div>`; }
+ACT.cycOwner = async uid => { await D.saveSettings({ cycleOwner: uid }); render(); };
+ACT.cycView = v => { cycView = v; render(); };
+ACT.cycNav = d => { const [y, m] = cycMonth.split('-').map(Number); cycMonth = isoDate(new Date(y, m - 1 + +d, 1)).slice(0, 7); render(); };
+ACT.cycYear = d => { cycMonth = (+(cycMonth || today()).slice(0, 4) + +d) + '-01'; render(); };
+const setPeriodDay = (d, on) => on ? Store.put('pday', { id: 'pd_' + d, by: cycOwner(), date: d }) : Store.remove('pd_' + d);
+ACT.cycSeed = async () => { const recs = []; PAST_PERIODS.forEach(([a, b]) => { for (let d = a; d <= b; d = addDays(d, 1)) recs.push({ id: 'pd_' + d, by: cycOwner(), date: d }); }); await Store.putMany('pday', recs); toast('Added ' + PAST_PERIODS.length + ' periods'); render(); };
+ACT.cycStart = async () => { await setPeriodDay(today(), true); toast('Period started — logged for today'); render(); };
+// "ended": fill any gap since it started, nothing after today
+ACT.cycEnd = async () => { const c = cycleData(); const p = c.periods[c.periods.length - 1]; if (!p) return; const recs = []; for (let d = p.start; d <= today(); d = addDays(d, 1)) recs.push({ id: 'pd_' + d, by: cycOwner(), date: d }); await Store.putMany('pday', recs); toast('Got it'); render(); };
+ACT.cycDay = d => { const mine = cycOwner() === D.me().id; const lg = Store.get('clog', 'cl_' + d); const c = cycleData(); const at = cycleAt(c, d);
+  if (!mine) return openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>${fmtDow(d)} ${MON[parseDate(d).getMonth()]}</span></div><h2 class="hd md" style="margin:0">${at ? PHASES[at.phase].name + ' · day ' + at.n : fmtD(d)}</h2>${c.days.has(d) ? '<div class="l">Period day</div>' : ''}<div class="sub" style="text-align:left">${lg ? esc((lg.sym || []).join(', ')) + (lg.flow ? ' · ' + esc(lg.flow) + ' flow' : '') + (lg.note ? ' · ' + esc(lg.note) : '') : 'Nothing logged.'}</div>`);
+  ACT.cycLog(d); };
+// log a day: period on/off, flow, how you feel
+ACT.cycLog = d => { const lg = JSON.parse(JSON.stringify(Store.get('clog', 'cl_' + d) || { id: 'cl_' + d, by: D.me().id, date: d, sym: [], flow: '', note: '' })); let per = cycleData().days.has(d); const at = cycleAt(cycleData(), d);
+  const draw = () => `<div class="bar"><button data-act="closeSheet">Close</button><span>${fmtDow(d)} ${MON[parseDate(d).getMonth()]}</span></div><h2 class="hd md" style="margin:0">${at ? PHASES[at.phase].name + ' · day ' + at.n : 'How are you?'}</h2>
+    <div class="row"><span style="font-size:14px">Period day</span><button class="tog ${per ? '' : 'off'}" data-act="clPer"></button></div>
+    ${per ? `<div class="seg">${['light', 'medium', 'heavy'].map(f => `<button class="${lg.flow === f ? 'on' : ''}" data-act="clFlow|${f}">${f}</button>`).join('')}</div>` : ''}
+    <div class="chips">${SYMPTOMS.map(s => `<button class="chip ${lg.sym.includes(s) ? 'on' : ''}" data-act="clSym|${s}">${s}</button>`).join('')}</div>
+    <textarea class="in" id="cl-note" placeholder="Anything else?" style="min-height:60px">${esc(lg.note || '')}</textarea>
+    <div class="row"><span></span><button class="btn sm" data-act="clSave">Save</button></div>`;
+  const keep = () => { const n = $('#cl-note'); if (n) lg.note = n.value; };
+  const redraw = () => { keep(); openSheet(draw(), null, 'tall'); };
+  ACT.clPer = () => { per = !per; redraw(); };
+  ACT.clFlow = f => { lg.flow = lg.flow === f ? '' : f; redraw(); };
+  ACT.clSym = s => { lg.sym = lg.sym.includes(s) ? lg.sym.filter(x => x !== s) : lg.sym.concat([s]); redraw(); };
+  ACT.clSave = async () => { keep(); await setPeriodDay(d, per); if (lg.sym.length || lg.note.trim() || lg.flow) await Store.put('clog', lg); else if (Store.get('clog', lg.id)) await Store.remove(lg.id); closeSheet(); toast('Saved'); render(); };
+  openSheet(draw(), null, 'tall'); };
+// the line on Home for both of you
+function cycleHomeHTML(){ const owner = cycOwner(); const ou = D.user(owner); if (!ou) return ''; const c = cycleData(); if (!c.last) return ''; const at = cycleAt(c, todayIn(ou)); if (!at) return ''; const ph = PHASES[at.phase];
+  return `<button class="glass pill row tap" style="display:flex" data-go="cycle"><span class="l"><i class="cdot" style="background:${ph.color}"></i>${owner === D.me().id ? 'Your cycle' : esc(ou.name) + '\'s cycle'}</span><span style="font-size:13px;font-weight:500">day ${at.n} · ${ph.name}${at.late ? ' · ' + at.late + 'd late' : ''} ›</span></button>`; }
+
 // ---------- What's new (shown once per phone after an update; Profile → What's new replays it) ----------
-const APP_VERSION = '2.12'; const WN_VERSIONS = ['2.10', '2.11', '2.12'];
+const APP_VERSION = '2.13'; const WN_VERSIONS = ['2.10', '2.11', '2.12', '2.13'];
 let wnIdx = 0, wnForce = false;
 function needsWhatsNew(){ if (window.DJ_SKIP_WHATSNEW && !wnForce) return false; if (wnForce) return true; try { return localStorage.getItem('dj.seenVer') !== APP_VERSION; } catch (e) { return false; } }
 function markWhatsNewSeen(){ try { localStorage.setItem('dj.seenVer', APP_VERSION); } catch (e) {} }
@@ -1719,7 +1960,13 @@ function whatsNewCards(){ const [a, b] = D.users2(); const o = D.other() || b ||
     ['Sharper photos', `Photos keep more detail now. Selfies came out mirrored? Tap a photo → ⇋ Flip. Save works on each other's photos, and chat photos always arrive with their message.`,
       `<div class="mini" style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap"><span class="chip">⇋ Flip</span><span class="chip">Save</span><span class="chip on">sharper</span></div>`],
   ].map(c => c.concat('2.12'));
-  return v212.concat(v211).concat([
+  const v213 = [
+    ['My money', `A budget for everything in your life, that only you see: categories with monthly limits, rent and bills that add themselves every month, receipts, income, and savings goals for the next trip. Your share of shared costs (and every secret present) counts automatically. Profile → My money, or + on Home.`,
+      `<div class="mini"><div class="row"><span class="l">Spent</span><span class="l">of $2,400</span></div><div class="num" style="font-size:26px">$1,630</div><div class="mbar big" style="margin-top:8px"><i style="width:68%"></i></div><div class="row" style="margin-top:12px;font-size:13px"><span>Toronto in December</span><span class="l">$640 of $1,200</span></div><div class="mbar"><i style="width:53%"></i></div></div>`],
+    ['Cycle', `Your cycle, with the science: which phase you're in (menstrual, follicular, ovulation, luteal), what the hormones are doing, how you might feel and what helps. Predictions come from past periods and get better with every one logged. You both see the day, the phase and the tracker — it's on Home.`,
+      `<div class="mini" style="display:flex;flex-direction:column;align-items:center"><svg viewBox="0 0 120 120" style="width:120px;height:120px"><circle r="48" cx="60" cy="60" fill="none" stroke="#E0607E" stroke-width="10" stroke-dasharray="40 400" transform="rotate(-90 60 60)"/><circle r="48" cx="60" cy="60" fill="none" stroke="#E9B872" stroke-width="10" stroke-dasharray="85 400" stroke-dashoffset="-42" transform="rotate(-90 60 60)"/><circle r="48" cx="60" cy="60" fill="none" stroke="#7FB98F" stroke-width="10" stroke-dasharray="25 400" stroke-dashoffset="-129" transform="rotate(-90 60 60)"/><circle r="48" cx="60" cy="60" fill="none" stroke="#9C86C4" stroke-width="10" stroke-dasharray="145 400" stroke-dashoffset="-156" transform="rotate(-90 60 60)"/></svg><div class="l">day 7 · Follicular</div></div>`],
+  ].map(c => c.concat('2.13'));
+  return v213.concat(v212).concat(v211).concat([
     ['Chat, with photos', `Chat has its own typing box now. Send messages, 💭 thoughts, photos and stickers — photos stay, and you can save them to your phone. You can also send a photo from your pal on Home.`,
       `<div class="mini" style="display:flex;flex-direction:column;gap:8px">${msg(o, `<div class="b">look where we ate 😭</div>`)}${msg(o, `<div class="cph" style="width:130px;height:96px;background:linear-gradient(135deg,#E9C9A8,#C98F7A)"></div>`)}${msg(me, `<div class="b">going back tomorrow</div>`, true)}<div class="composer" style="margin-top:4px"><span class="cbtn">◫</span><span class="cbtn">☺</span><span class="in" style="color:var(--mu);font-size:14px">say something</span><span class="btn sm">Send</span></div></div>`],
     ['Your own stickers', `Make stickers out of your photos: in Photos, press and hold one of you until it lifts out, tap <b>Copy</b>, then <b>Paste</b> here. They're shared — use them on photos and in chat. Hold one to remove it.`,
