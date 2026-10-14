@@ -569,3 +569,29 @@ ul.cyl{margin:6px 0 0;padding-left:18px;font-size:13px;line-height:1.55;color:va
 .srow{gap:10px;align-items:center}
 .msg.flash .b{animation:flash 1.6s}
 @keyframes flash{0%,40%{box-shadow:0 0 0 3px #F6E39A}100%{box-shadow:none}}
+
+/* V2.14c: videos in the import review */
+.ph .vbadge{top:4px;bottom:auto;left:4px;font-size:9.5px;padding:1px 6px}
+.vph{display:block;width:100%;height:100%;background:linear-gradient(135deg,#d9d2cc,#b9aea6)}
+
+/* V2.15: choose the part of a long video */
+.trimov{position:fixed;inset:0;z-index:25;background:#111;color:#fff;display:flex;flex-direction:column;gap:12px;padding:calc(env(safe-area-inset-top,0px) + 10px) 16px calc(env(safe-area-inset-bottom,0px) + 16px);max-width:480px;margin:0 auto}
+.trimbar{display:flex;justify-content:space-between;align-items:center;font-weight:500}.trimbar button{color:#fff;background:none;border:0;font:inherit;padding:6px 0;opacity:.85}
+.trimvid{position:relative;flex:1;min-height:0;display:flex;align-items:center;justify-content:center;border-radius:14px;overflow:hidden;background:#000}
+.trimvid video{max-width:100%;max-height:100%;display:block}
+.trimplay{position:absolute;width:56px;height:56px;border-radius:50%;border:0;background:rgba(255,255,255,.18);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);color:#fff;font-size:20px}
+.trimov.playing .trimplay{opacity:0}
+.trimtimes{display:flex;justify-content:space-between;align-items:baseline;font-size:14px}.trimtimes b{font-size:20px;font-weight:500}.trimtimes span{opacity:.7}
+.trimtrack{position:relative;height:58px;border-radius:10px;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
+.trimstrip{position:absolute;inset:0;display:flex;background:#333}.trimstrip i{flex:1;background:#2a2a2a center/cover no-repeat;border-right:1px solid #111}
+.trimsel{position:absolute;top:0;bottom:0;border:3px solid #F6E39A;border-left-width:16px;border-right-width:16px;border-radius:10px;box-shadow:0 0 0 999px rgba(0,0,0,.6);box-sizing:border-box;cursor:grab}
+.trimsel .h{position:absolute;top:0;bottom:0;width:34px;z-index:1}.trimsel .h.l{left:-26px}.trimsel .h.r{right:-26px}
+.trimsel .h::after{content:'';position:absolute;top:50%;left:50%;width:3px;height:18px;margin:-9px 0 0 -1.5px;border-radius:2px;background:#5a4b10}
+.trimhead{position:absolute;top:0;bottom:0;width:2px;background:#fff;left:0;pointer-events:none;opacity:0}.trimov.playing .trimhead{opacity:1}
+.trimmeter{display:flex;align-items:center;gap:10px;font-size:13px}.trimmeter .mbar{flex:1;height:6px;border-radius:3px;background:rgba(255,255,255,.15);overflow:hidden}.trimmeter .mbar i{display:block;height:100%;background:#F6E39A;border-radius:3px}
+.trimmeter.over .mbar i{background:#E0607E}.trimmeter.over span{color:#F3A6B8}
+.trimmode{background:rgba(255,255,255,.1)}.trimmode button{color:#fff}.trimmode button.on{background:rgba(255,255,255,.22);color:#fff}
+.trimnote{font-size:13px;opacity:.75;min-height:18px;text-align:center}
+.trimuse{background:#F6E39A;color:#2a2410}.trimuse:disabled{opacity:.45}
+.trimov.trimbusy .trimtrack,.trimov.trimbusy .trimmode{pointer-events:none;opacity:.6}
+.ph.big img,.ph.big .vph{opacity:.55}.trimbadge{position:absolute;right:4px;bottom:4px;background:#F6E39A;color:#2a2410;font-size:10px;font-style:normal;font-weight:600;padding:2px 6px;border-radius:99px;pointer-events:none;z-index:1}

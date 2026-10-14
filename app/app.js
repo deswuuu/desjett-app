@@ -348,7 +348,7 @@ ACT.bubble = uid => {
   ACT.bubKind = k => { keepCap(); kind = k; openSheet(draw(), () => { if (k !== 'photo') $('#bub-text').focus(); }); };
   ACT.bubChip = c => { $('#bub-text').value = c; };
   ACT.bubPhoto = () => { keepCap(); $('#bub-file').click(); };
-  ACT.bubFiles = (a, el) => { keepCap(); Array.from(el.files || []).forEach(f => { if (tooBig(f)) return toast(`That video is ${Math.round(f.size / 1048576)} MB — the limit is 50 MB`); pending.push({ file: f, url: URL.createObjectURL(f), video: isVideo(f) }); }); kind = 'photo'; openSheet(draw()); };
+  ACT.bubFiles = async (a, el) => { keepCap(); const files = Array.from(el.files || []); el.value = ''; for (let f of files) { if (tooBig(f)) { f = await fitVideo(f); if (!f) continue; } pending.push({ file: f, url: URL.createObjectURL(f), video: isVideo(f) }); } kind = 'photo'; openSheet(draw()); };
   ACT.bubRmPh = i => { keepCap(); pending.splice(+i, 1); openSheet(draw()); };
   ACT.bubSendPh = async () => { keepCap(); if (!pending.length) return; const text = caption.trim(); toast(pending.length === 1 ? 'Sending…' : 'Sending ' + pending.length + ' photos…');
     for (const [i, p] of pending.entries()) { const ph = p.video ? await storeVideo(p.file) : await storePhoto(p.file); await Store.put('bubbles', Object.assign({ id: Store.uid(), userId: me.id, kind: 'say', photo: ph.asset, thumb: ph.thumb, text: i === 0 && text ? text : p.video ? '🎬 Video' : '📷 Photo', auto: !(i === 0 && text), at: Date.now() + i }, p.video ? { video: true, dur: ph.dur } : {})); }
@@ -370,7 +370,7 @@ function renderTrips(app){
     body = now.map(t => { const n = daysBetween(t.start, t.end) + 1, d = daysBetween(t.start, t0) + 1; const ms = D.tripMoments(t.id).filter(m => m.kind === 'moment'); const td = D.tripMoments(t.id).filter(m => m.date === t0 && m.kind !== 'booking');
       return `<div class="l">Happening now</div><button class="glass tap" style="margin-top:-6px" data-go="trip/${t.id}"><div class="row"><span style="font-size:22px;font-weight:500;letter-spacing:-.02em">${esc(t.city)}</span><span class="chip on" style="font-size:10.5px;padding:3px 9px">Day ${d} of ${n}</span></div><div class="sub" style="text-align:left">${fmtD(t.start)} – ${fmtD(t.end)} · ${ms.length} memor${ms.length === 1 ? 'y' : 'ies'} so far</div><div class="tripbar"><i style="width:${Math.round(d / n * 100)}%"></i></div></button>
         <div class="tiles"><button data-go="day/${t.id}_${t0}"><b>Today</b><span>${td.length ? td.length + ' thing' + (td.length === 1 ? '' : 's') : 'add something'}</span></button><button data-go="days/${t.id}"><b>Days</b><span>${n} days</span></button><button data-go="budget/${t.id}"><b>Budget</b><span>${money(D.tripCost(t).total)}</span></button></div>
-        <div class="list" style="font-size:13.5px;margin-top:-4px"><button class="row" data-act="importStart|${t.id}"><span>Import photos</span><span class="l">sorts them into days ›</span></button></div>`; }).join('')
+        <div class="list" style="font-size:13.5px;margin-top:-4px"><button class="row" data-act="importStart|${t.id}"><span>Import photos & videos</span><span class="l">sorts them into days ›</span></button></div>`; }).join('')
       + (up[0] ? `<div class="l mt-auto">Up next</div><div class="list" style="margin-top:-6px"><button class="row" data-go="trip/${up[0].id}"><div style="text-align:left"><div style="font-weight:500">${esc(up[0].city)}</div><div class="l">${fmtD(up[0].start)} – ${fmtD(up[0].end)}</div></div><span class="l">${daysBetween(t0, up[0].start)} days ›</span></button></div>` : '');
   } else if (tripsTab === 'upcoming') {
     const first = up[0];
@@ -769,7 +769,7 @@ function momentSheet(m, editing, opts){
   ACT.mNewOcc = async () => { keep(); const name = await ask('Name the occasion', { input: '', placeholder: 'One year, Christmas…', ok: 'Add' }); if (!name) return; const o = await Store.put('trips', { id: Store.uid(), occasion: true, kind: 'custom', city: name, start: m.date, end: m.date, authorId: me.id, secret: false, createdAt: Date.now() }); m.tripId = o.id; ddOpen = false; redraw(); };
   let photoKind = 'photo';
   ACT.mPhoto = kind => { keep(); photoKind = kind; const f = $('#m-file'); f.click(); };
-  ACT.mFiles = (a, f) => { const big = []; Array.from(f.files).forEach(file => { if (tooBig(file)) return big.push(file); pendingPhotos.push({ file, polaroid: photoKind === 'polaroid' && !isVideo(file), video: isVideo(file), url: URL.createObjectURL(file) }); }); if (big.length) toast(big.length === 1 ? `That video is ${Math.round(big[0].size / 1048576)} MB — the limit is 50 MB. Try a shorter clip.` : big.length + ' videos are over the 50 MB limit'); redraw(); };
+  ACT.mFiles = async (a, f) => { const files = Array.from(f.files || []); f.value = ''; for (let file of files) { if (tooBig(file)) { file = await fitVideo(file); if (!file) continue; } pendingPhotos.push({ file, polaroid: photoKind === 'polaroid' && !isVideo(file), video: isVideo(file), url: URL.createObjectURL(file) }); } redraw(); };
   ACT.mRmPhoto = async arg => { keep(); const [k, i] = arg.split(','); if (k === 'p') { pendingPhotos.splice(+i, 1); return redraw(); } if (!await confirmRm('photo')) return; const [p] = m.photos.splice(+i, 1); if (p) { removedAssets.push(p.asset); if (p.thumb) removedAssets.push(p.thumb); } redraw(); };
   ACT.mRmItem = async id => { keep(); const it = m.items.find(x => x.id === id); if (!it) return; if (!await confirmRm(it.type === 'voice' ? 'voice note' : it.type)) return; m.items = m.items.filter(x => x.id !== id); if (it.type === 'voice' && it.asset) removedAssets.push(it.asset); redraw(); };
   const songAsk = async sg => { const url = await ask('Paste a Spotify link', { input: sg.url || '', placeholder: 'https://open.spotify.com/track/…', ok: 'Next' }); if (url == null || !url) return null; sg.url = url; sg.title = (await ask('Song title', { sub: 'optional', input: sg.title || '', ok: 'Next' })) || ''; sg.artist = (await ask('Artist', { sub: 'optional', input: sg.artist || '', ok: 'Done' })) || ''; return sg; };
@@ -849,16 +849,211 @@ function scaleTo(src, w0, h0, max, mirror){ let w = w0, h = h0, cur = src; const
 const toJpeg = (c, q) => new Promise(r => c.toBlob(r, 'image/jpeg', q));
 async function shrink(file, max, mirror){ try { const img = await decodeImage(file); const c = scaleTo(img, img.naturalWidth, img.naturalHeight, max || 2048, mirror); return await toJpeg(c, .9); } catch (e) { return file; } }
 // a video is kept as it is (up to 50 MB — the free Supabase plan's limit per file), with a still for grids and the viewer
-const VIDEO_MAX = 50 * 1024 * 1024;
+const VIDEO_MAX = window.DJ_VIDEO_MAX || 50 * 1024 * 1024;
 async function videoStill(file){ return new Promise(res => { const v = document.createElement('video'); const u = URL.createObjectURL(file); let done = false; const finish = r => { if (done) return; done = true; URL.revokeObjectURL(u); res(r); };
   v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = u; setTimeout(() => finish(null), 8000);
   v.onloadeddata = () => { try { v.currentTime = Math.min(0.5, (v.duration || 1) / 3); } catch (e) { finish(null); } };
-  v.onseeked = async () => { try { const c = scaleTo(v, v.videoWidth, v.videoHeight, 720); finish({ still: await toJpeg(c, .82), dur: v.duration || 0 }); } catch (e) { finish(null); } };
+  v.onseeked = async () => { try { const c = scaleTo(v, v.videoWidth, v.videoHeight, 720); finish({ still: await toJpeg(c, .82), dur: v.duration || 0, w: v.videoWidth, h: v.videoHeight }); } catch (e) { finish(null); } };
   v.onerror = () => finish(null); }); }
 async function storeVideo(file){ if (file.size > VIDEO_MAX) throw new Error('too big'); const s = await videoStill(file); const ext = ((file.name.split('.').pop() || '').toLowerCase().slice(0, 4)) || (file.type.includes('quicktime') ? 'mov' : 'mp4');
   const thumb = s && s.still ? await Store.putBlob(s.still, 'jpg') : ''; const asset = await Store.putBlob(file, ext); return { asset, thumb, video: true, dur: s ? Math.round(s.dur) : 0, bytes: file.size }; }
 const isVideo = f => /^video\//.test(f.type) || /\.(mov|mp4|m4v|webm)$/i.test(f.name || '');
 const tooBig = f => isVideo(f) && f.size > VIDEO_MAX;
+// ---------- V2.15: a video over 50 MB → choose the part (like Instagram) ----------
+// "Full quality" cuts the part straight out of the MP4/MOV — no re-encoding, so it's instant and nothing is lost: the
+// movie's sample tables are rebuilt for just that part and its bytes are copied across. It starts on the nearest keyframe.
+// "Smaller" plays the part once into a 720p recording, which fits a few minutes but takes as long as the part.
+const mp4T = (u8, o) => String.fromCharCode(u8[o], u8[o + 1], u8[o + 2], u8[o + 3]);
+async function mp4Index(file){
+  const rd = async (a, b) => new Uint8Array(await file.slice(a, b).arrayBuffer());
+  let pos = 0, moov = null, ftyp = null;
+  for (let n = 0; n < 64 && pos + 8 <= file.size; n++) {
+    const h = await rd(pos, pos + 16); const hv = new DataView(h.buffer); let size = hv.getUint32(0), hl = 8; const type = mp4T(h, 4);
+    if (size === 1 && h.length >= 16) { size = hv.getUint32(8) * 4294967296 + hv.getUint32(12); hl = 16; } else if (size === 0) size = file.size - pos;
+    if (size < hl) return null;
+    if (type === 'moov') { if (size > 60e6) return null; moov = await rd(pos, pos + size); }
+    else if (type === 'ftyp' && size <= 1024) ftyp = await rd(pos, pos + size);
+    else if (type === 'moof') return null;   // fragmented — can't cut this kind
+    pos += size; }
+  if (!moov) return null;
+  const dv = new DataView(moov.buffer);
+  const kids = (a, b) => { const out = []; let o = a; while (o + 8 <= b) { let size = dv.getUint32(o), hl = 8; if (size === 1) { size = dv.getUint32(o + 8) * 4294967296 + dv.getUint32(o + 12); hl = 16; } else if (size === 0) size = b - o; if (size < hl || o + size > b) break; out.push({ type: mp4T(moov, o + 4), o, hl, end: o + size }); o += size; } return out; };
+  const find = (list, t) => list.find(x => x.type === t);
+  const top = kids(8, moov.length); const mvhd = find(top, 'mvhd'); if (!mvhd) return null;
+  const mb = mvhd.o + mvhd.hl; const mvTs = dv.getUint32(mb + (moov[mb] === 1 ? 20 : 12)); if (!mvTs) return null;
+  const tracks = [];
+  for (const tk of top.filter(x => x.type === 'trak')) {
+    const tch = kids(tk.o + tk.hl, tk.end); const mdia = find(tch, 'mdia'), tkhd = find(tch, 'tkhd'); if (!mdia || !tkhd) return null;
+    const mch = kids(mdia.o + mdia.hl, mdia.end); const mdhd = find(mch, 'mdhd'), hdlr = find(mch, 'hdlr'), minf = find(mch, 'minf'); if (!mdhd || !minf) return null;
+    const hb = mdhd.o + mdhd.hl; const ts = dv.getUint32(hb + (moov[hb] === 1 ? 20 : 12)); if (!ts) return null;
+    const handler = hdlr ? mp4T(moov, hdlr.o + hdlr.hl + 8) : '';
+    const fch = kids(minf.o + minf.hl, minf.end); const stbl = find(fch, 'stbl'); if (!stbl) return null; const sch = kids(stbl.o + stbl.hl, stbl.end);
+    const B = t => { const x = find(sch, t); return x ? x.o + x.hl : -1; };
+    let N = 0, sizes; const stsz = B('stsz'), stz2 = B('stz2');
+    if (stsz >= 0) { const fixed = dv.getUint32(stsz + 4); N = dv.getUint32(stsz + 8); sizes = new Uint32Array(N); for (let i = 0; i < N; i++) sizes[i] = fixed || dv.getUint32(stsz + 12 + i * 4); }
+    else if (stz2 >= 0) { const fs = moov[stz2 + 7]; N = dv.getUint32(stz2 + 8); sizes = new Uint32Array(N); for (let i = 0; i < N; i++) sizes[i] = fs === 32 ? dv.getUint32(stz2 + 12 + i * 4) : fs === 16 ? dv.getUint16(stz2 + 12 + i * 2) : fs === 8 ? moov[stz2 + 12 + i] : (moov[stz2 + 12 + (i >> 1)] >> (i & 1 ? 0 : 4)) & 15; }
+    else return null;
+    const dts = new Float64Array(N + 1); { const p = B('stts'); let i = 0, t = 0; if (p >= 0) { const n = dv.getUint32(p + 4); for (let e = 0; e < n && i < N; e++) { const c = dv.getUint32(p + 8 + e * 8), d = dv.getUint32(p + 12 + e * 8); for (let k = 0; k < c && i < N; k++) { dts[i++] = t; t += d; } } } while (i < N) dts[i++] = t; dts[N] = t; }
+    let cto = null, cttsVer = 0; { const p = B('ctts'); if (p >= 0) { cttsVer = moov[p]; cto = new Int32Array(N); const n = dv.getUint32(p + 4); let i = 0; for (let e = 0; e < n && i < N; e++) { const c = dv.getUint32(p + 8 + e * 8), v = dv.getInt32(p + 12 + e * 8); for (let k = 0; k < c && i < N; k++) cto[i++] = v; } } }
+    let sync = null; { const p = B('stss'); if (p >= 0) { sync = new Uint8Array(N); const n = dv.getUint32(p + 4); for (let e = 0; e < n; e++) { const s = dv.getUint32(p + 8 + e * 4); if (s >= 1 && s <= N) sync[s - 1] = 1; } } }
+    const offs = new Float64Array(N); let sdi = 1;
+    { const pc = B('stco'), p64 = B('co64'), ps = B('stsc'); if ((pc < 0 && p64 < 0) || ps < 0) return null;
+      const nc = dv.getUint32((pc >= 0 ? pc : p64) + 4); const chunkOff = c => pc >= 0 ? dv.getUint32(pc + 8 + c * 4) : dv.getUint32(p64 + 8 + c * 8) * 4294967296 + dv.getUint32(p64 + 12 + c * 8);
+      const ne = dv.getUint32(ps + 4); if (ne) sdi = dv.getUint32(ps + 16); let i = 0;
+      for (let e = 0; e < ne; e++) { const first = dv.getUint32(ps + 8 + e * 12) - 1, spc = dv.getUint32(ps + 12 + e * 12), last = e + 1 < ne ? dv.getUint32(ps + 8 + (e + 1) * 12) - 1 : nc;
+        for (let c = first; c < last && i < N; c++) { let o = chunkOff(c); for (let k = 0; k < spc && i < N; k++) { offs[i] = o; o += sizes[i]; i++; } } }
+      if (i < N) return null; }
+    let mediaTime = 0; const edts = find(tch, 'edts');
+    if (edts) { const el = find(kids(edts.o + edts.hl, edts.end), 'elst'); if (el) { const p = el.o + el.hl, v = moov[p], n = dv.getUint32(p + 4);
+      for (let e = 0; e < n; e++) { const q = p + 8 + e * (v === 1 ? 20 : 12); const mt = v === 1 ? dv.getInt32(q + 8) * 4294967296 + dv.getUint32(q + 12) : dv.getInt32(q + 4); if (mt >= 0) { mediaTime = mt; break; } } } }
+    const cum = new Float64Array(N + 1); for (let i = 0; i < N; i++) cum[i + 1] = cum[i] + sizes[i];
+    tracks.push({ tk, tch, tkhd, mdia, mch, mdhd, minf, fch, stbl, sch, handler, ts, N, sizes, cum, dts, cto, cttsVer, sync, offs, sdi, mediaTime });
+  }
+  const video = tracks.find(t => t.handler === 'vide' && t.N); if (!video) return null;
+  return { file, moov, dv, ftyp, top, mvhd, mvTs, tracks, video, dur: video.dts[video.N] / video.ts };
+}
+// which samples of each track a part [a, b) needs; video starts on the keyframe at or before a
+function mp4Pick(ix, a, b){
+  const v = ix.video; let s = 0; for (let i = 0; i < v.N; i++) { if (v.dts[i] / v.ts > a + 1e-6) break; if (!v.sync || v.sync[i]) s = i; }
+  const t0 = v.dts[s] / v.ts;
+  const parts = ix.tracks.map(t => { if (t === v) { let e = s; while (e < v.N && v.dts[e] / v.ts < b - 1e-6) e++; return [s, Math.max(e, s + 1)]; }
+    let i0 = 0; while (i0 < t.N && t.dts[i0 + 1] / t.ts <= t0 + 1e-6) i0++; let i1 = i0; while (i1 < t.N && t.dts[i1] / t.ts < b - 1e-6) i1++; return [i0, i1]; });
+  return { t0, parts };
+}
+const mp4Bytes = (ix, pk) => ix.moov.length + (ix.ftyp ? ix.ftyp.length : 0) + 16 + ix.tracks.reduce((s, t, i) => s + t.cum[pk.parts[i][1]] - t.cum[pk.parts[i][0]], 0);
+function mp4Cut(ix, a, b){
+  const pk = mp4Pick(ix, a, b); const u8 = ix.moov, dv = ix.dv;
+  // the part's samples, in ~1 second chunks per track, written in time order
+  const chunks = []; ix.tracks.forEach((t, ti) => { const [i0, i1] = pk.parts[ti]; let c = null;
+    for (let i = i0; i < i1; i++) { const k = Math.floor((t.dts[i] - t.dts[i0]) / t.ts); if (!c || c.k !== k) { c = { ti, k, t: (t.dts[i] - t.dts[i0]) / t.ts, first: i, n: 0, bytes: 0 }; chunks.push(c); } c.n++; c.bytes += t.sizes[i]; } });
+  chunks.sort((x, y) => x.t - y.t || x.ti - y.ti); let mdatLen = 0; chunks.forEach(c => { c.pos = mdatLen; mdatLen += c.bytes; });
+  const enc = new TextEncoder();
+  const cat = arrs => { let n = 0; arrs.forEach(x => n += x.length); const r = new Uint8Array(n); let o = 0; arrs.forEach(x => { r.set(x, o); o += x.length; }); return r; };
+  const mk = (type, len, fill) => { const r = new Uint8Array(8 + len); const d = new DataView(r.buffer); d.setUint32(0, 8 + len); r.set(enc.encode(type), 4); fill(d); return r; };
+  const wrap = (type, list) => { const body = cat(list); const r = new Uint8Array(8 + body.length); new DataView(r.buffer).setUint32(0, r.length); r.set(enc.encode(type), 4); r.set(body, 8); return r; };
+  const raw = x => u8.slice(x.o, x.end);
+  const set64 = (d, o, n) => { d.setUint32(o, Math.floor(n / 4294967296)); d.setUint32(o + 4, n >>> 0); };
+  const rl = vals => { const r = []; for (const v of vals) { const l = r[r.length - 1]; if (l && l[1] === v) l[0]++; else r.push([1, v]); } return r; };
+  const drop = new Set(['stts', 'ctts', 'stss', 'stsz', 'stz2', 'stsc', 'stco', 'co64', 'sdtp', 'sgpd', 'sbgp', 'cslg', 'stps', 'subs', 'saiz', 'saio']);
+  const build = base => { const tkDur = [];
+    const traks = ix.tracks.map((t, ti) => { const [i0, i1] = pk.parts[ti]; const n = i1 - i0; const mine = chunks.filter(c => c.ti === ti);
+      const durs = []; let md = 0; for (let i = i0; i < i1; i++) { const d = t.dts[i + 1] - t.dts[i]; durs.push(d); md += d; }
+      const sr = rl(durs); const stts = mk('stts', 8 + sr.length * 8, d => { d.setUint32(12, sr.length); sr.forEach((r, k) => { d.setUint32(16 + k * 8, r[0]); d.setUint32(20 + k * 8, r[1]); }); });
+      let ctts = null; if (t.cto) { const cr = rl(Array.from(t.cto.subarray(i0, i1))); ctts = mk('ctts', 8 + cr.length * 8, d => { d.setUint8(8, t.cttsVer); d.setUint32(12, cr.length); cr.forEach((r, k) => { d.setUint32(16 + k * 8, r[0]); d.setInt32(20 + k * 8, r[1]); }); }); }
+      let stss = null; if (t.sync) { const ks = []; for (let i = i0; i < i1; i++) if (t.sync[i]) ks.push(i - i0 + 1); stss = mk('stss', 8 + ks.length * 4, d => { d.setUint32(12, ks.length); ks.forEach((s, k) => d.setUint32(16 + k * 4, s)); }); }
+      const stsz = mk('stsz', 12 + n * 4, d => { d.setUint32(16, n); for (let i = 0; i < n; i++) d.setUint32(20 + i * 4, t.sizes[i0 + i]); });
+      const sc = []; mine.forEach((c, k) => { const l = sc[sc.length - 1]; if (!l || l[1] !== c.n) sc.push([k + 1, c.n]); });
+      const stsc = mk('stsc', 8 + sc.length * 12, d => { d.setUint32(12, sc.length); sc.forEach((r, k) => { d.setUint32(16 + k * 12, r[0]); d.setUint32(20 + k * 12, r[1]); d.setUint32(24 + k * 12, t.sdi); }); });
+      const stco = mk('stco', 8 + mine.length * 4, d => { d.setUint32(12, mine.length); mine.forEach((c, k) => d.setUint32(16 + k * 4, base + c.pos)); });
+      const stsd = t.sch.find(x => x.type === 'stsd');
+      const stbl = wrap('stbl', [raw(stsd), stts, ctts, stss, stsz, stsc, stco].filter(Boolean).concat(t.sch.filter(x => x.type !== 'stsd' && !drop.has(x.type)).map(raw)));
+      const minf = wrap('minf', t.fch.map(x => x === t.stbl ? stbl : raw(x)));
+      const mdhd = raw(t.mdhd); { const d = new DataView(mdhd.buffer); const p = t.mdhd.hl; if (mdhd[p] === 1) set64(d, p + 24, md); else d.setUint32(p + 16, Math.min(md, 4294967295)); }
+      const mdia = wrap('mdia', t.mch.map(x => x === t.mdhd ? mdhd : x === t.minf ? minf : raw(x)));
+      const td = Math.round(md / t.ts * ix.mvTs); tkDur.push(td);
+      const tkhd = raw(t.tkhd); { const d = new DataView(tkhd.buffer); const p = t.tkhd.hl; if (tkhd[p] === 1) set64(d, p + 28, td); else d.setUint32(p + 20, Math.min(td, 4294967295)); }
+      const edts = t === ix.video && t.mediaTime > 0 ? wrap('edts', [mk('elst', 20, d => { d.setUint32(12, 1); d.setUint32(16, td); d.setInt32(20, t.mediaTime); d.setUint32(24, 0x10000); })]) : null;
+      return wrap('trak', t.tch.filter(x => x.type !== 'edts' || edts).map(x => x === t.tkhd ? tkhd : x === t.mdia ? mdia : x.type === 'edts' ? edts : raw(x))); });
+    const mvhd = raw(ix.mvhd); { const d = new DataView(mvhd.buffer); const p = ix.mvhd.hl, mx = Math.max(...tkDur); if (mvhd[p] === 1) set64(d, p + 24, mx); else d.setUint32(p + 16, Math.min(mx, 4294967295)); }
+    let k = 0; return wrap('moov', ix.top.map(x => x === ix.mvhd ? mvhd : x.type === 'trak' ? traks[k++] : raw(x))); };
+  const head = ix.ftyp || new Uint8Array(0); const moov0 = build(0); const moov = build(head.length + moov0.length + 8);
+  const mdatH = new Uint8Array(8); new DataView(mdatH.buffer).setUint32(0, mdatLen + 8); mdatH.set(enc.encode('mdat'), 4);
+  const parts = [head, moov, mdatH];
+  for (const c of chunks) { const t = ix.tracks[c.ti]; let s = -1, e = -1; for (let i = c.first; i < c.first + c.n; i++) { const o = t.offs[i]; if (o === e) e += t.sizes[i]; else { if (s >= 0) parts.push(ix.file.slice(s, e)); s = o; e = o + t.sizes[i]; } } if (s >= 0) parts.push(ix.file.slice(s, e)); }
+  const f = ix.file; return new File(parts, f.name || 'video.mov', { type: f.type || 'video/mp4', lastModified: f.lastModified });
+}
+// "Smaller": play the part once into a 720p recording. Starts inside the tap (iPhones only play sound from a tap).
+function videoShrink(file, a, b, onProg, sig){
+  const v = document.createElement('video'); v.playsInline = true; v.preload = 'auto'; const url = URL.createObjectURL(file); v.src = url;
+  // sound goes only into the recording (never the speaker), wired up before the first play
+  let ac = null, dst = null; try { ac = new (window.AudioContext || window.webkitAudioContext)(); ac.resume(); const src = ac.createMediaElementSource(v); dst = ac.createMediaStreamDestination(); src.connect(dst); } catch (e) { dst = null; }
+  const first = v.play().catch(() => {});
+  return (async () => {
+    await first; v.pause(); if (!v.videoWidth) await new Promise(r => { v.onloadedmetadata = r; setTimeout(r, 5000); });
+    const s = Math.min(1, 720 / Math.min(v.videoWidth, v.videoHeight)); const W = Math.max(2, Math.round(v.videoWidth * s / 2) * 2), H = Math.max(2, Math.round(v.videoHeight * s / 2) * 2);
+    const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d'); const stream = c.captureStream(30);
+    if (dst) dst.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+    const len = b - a; const vbr = Math.round(Math.max(800e3, Math.min(2.5e6, VIDEO_MAX * 0.85 * 8 / len - 128e3)));
+    const mime = ['video/mp4;codecs=avc1.42E01F,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m));
+    if (!mime) throw new Error('This phone can\'t shrink videos');
+    v.currentTime = a; await new Promise(r => { v.onseeked = r; setTimeout(r, 4000); }); x.drawImage(v, 0, 0, W, H);
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: vbr, audioBitsPerSecond: 128e3 }); const bits = []; rec.ondataavailable = e => { if (e.data && e.data.size) bits.push(e.data); };
+    const stopped = new Promise(r => rec.onstop = r); rec.start(1000); await v.play();
+    await new Promise(res => { const tick = () => { if (sig.stop || v.ended || v.currentTime >= b) return res(); x.drawImage(v, 0, 0, W, H); onProg(Math.min(1, (v.currentTime - a) / len)); requestAnimationFrame(tick); }; tick(); });
+    v.pause(); rec.stop(); await stopped; stream.getTracks().forEach(t => t.stop()); if (ac) ac.close().catch(() => {}); URL.revokeObjectURL(url);
+    if (sig.stop) return null;
+    const type = mime.split(';')[0]; return new File(bits, (file.name || 'video').replace(/\.\w+$/, '') + '-part.' + (type === 'video/mp4' ? 'mp4' : 'webm'), { type, lastModified: file.lastModified });
+  })();
+}
+const fmtLen = s => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+const SMALL_MAX = 300;   // "Smaller" goes up to 5 minutes
+// the trim screen: resolves to a File that fits, or null if cancelled
+function fitVideo(file){ return new Promise(async done => {
+  const ix = await mp4Index(file).catch(() => null);
+  const url = URL.createObjectURL(file); const ov = document.createElement('div'); ov.className = 'trimov';
+  ov.innerHTML = `<div class="trimbar"><button data-t="cancel">Cancel</button><span>Choose the part</span><span style="width:52px"></span></div>
+    <div class="trimvid"><video playsinline preload="auto" src="${url}"></video><button class="trimplay" data-t="play" aria-label="Play">▶</button></div>
+    <div class="trimtimes"><b id="tr-len"></b><span id="tr-range"></span></div>
+    <div class="trimtrack"><div class="trimstrip">${'<i></i>'.repeat(10)}</div><div class="trimsel"><i class="h l"></i><i class="h r"></i></div><div class="trimhead"></div></div>
+    <div class="trimmeter"><div class="mbar"><i></i></div><span id="tr-mb"></span></div>
+    <div class="seg trimmode">${ix ? '<button data-t="full">Full quality</button>' : ''}<button data-t="small">Smaller · 720p</button></div>
+    <div class="trimnote" id="tr-note"></div>
+    <button class="btn block trimuse" data-t="use">Use this part</button>`;
+  document.body.appendChild(ov);
+  const vid = ov.querySelector('video'), track = ov.querySelector('.trimtrack'), sel = ov.querySelector('.trimsel'), head = ov.querySelector('.trimhead'), useB = ov.querySelector('[data-t="use"]');
+  let gone = false; const early = e => { if (e.target.closest('[data-t="cancel"]')) { gone = true; vid.removeAttribute('src'); ov.remove(); URL.revokeObjectURL(url); done(null); } }; ov.addEventListener('click', early);   // Cancel works while it loads
+  let dur = ix ? ix.dur : 0; if (!dur) await new Promise(r => { if (vid.duration) return r(); vid.onloadedmetadata = r; vid.onerror = r; setTimeout(r, 6000); }); dur = dur || vid.duration || 0;
+  if (gone) return; ov.removeEventListener('click', early);
+  if (!dur || !isFinite(dur)) { ov.remove(); URL.revokeObjectURL(url); toast('Couldn\'t open that video'); return done(null); }
+  let mode = ix ? 'full' : 'small', a = 0, b = 0, busy = null;
+  const LIM = VIDEO_MAX - 512 * 1024;
+  const bytesOf = (a1, b1) => mode === 'full' ? mp4Bytes(ix, mp4Pick(ix, a1, b1)) : Math.round((b1 - a1) * (Math.max(800e3, Math.min(2.5e6, VIDEO_MAX * 0.85 * 8 / Math.max(1, b1 - a1) - 128e3)) + 128e3) / 8);
+  const fits = (a1, b1) => (mode === 'small' ? b1 - a1 <= SMALL_MAX : true) && bytesOf(a1, b1) <= LIM;
+  const longest = a1 => { if (fits(a1, dur)) return dur; let lo = a1 + 0.5, hi = dur; if (!fits(a1, lo)) return lo; for (let k = 0; k < 24; k++) { const m = (lo + hi) / 2; if (fits(a1, m)) lo = m; else hi = m; } return lo; };
+  const snap = () => { if (mode === 'full') a = mp4Pick(ix, a, b).t0; };
+  const draw = () => { const ok = fits(a, b), by = bytesOf(a, b);
+    sel.style.left = (a / dur * 100) + '%'; sel.style.width = ((b - a) / dur * 100) + '%';
+    ov.querySelector('#tr-len').textContent = fmtLen(b - a); ov.querySelector('#tr-range').textContent = fmtLen(a) + ' – ' + fmtLen(b) + ' of ' + fmtLen(dur);
+    const bar = ov.querySelector('.mbar i'); bar.style.width = Math.min(100, by / VIDEO_MAX * 100) + '%'; ov.querySelector('.trimmeter').classList.toggle('over', !ok);
+    ov.querySelector('#tr-mb').textContent = (mode === 'small' ? 'about ' : '') + Math.max(1, Math.round(by / 1048576)) + ' MB of ' + Math.round(VIDEO_MAX / 1048576);
+    ov.querySelectorAll('.trimmode button').forEach(x => x.classList.toggle('on', x.dataset.t === mode));
+    ov.querySelector('#tr-note').textContent = !ok ? (mode === 'small' && b - a > SMALL_MAX ? 'Smaller goes up to 5 minutes — shorten it.' : 'Too big — make it shorter' + (mode === 'full' ? ', or try Smaller.' : '.')) : mode === 'full' ? 'Cut straight from your video — instant, nothing lost.' : `Plays through once to shrink it — about ${fmtLen(b - a)}. Keep the app open.`;
+    if (!busy) { useB.disabled = !ok; useB.textContent = 'Use this part'; } };
+  b = longest(0); if (mode === 'full' && b - a < 1.5) { mode = 'small'; b = longest(0); }
+  draw();
+  // filmstrip
+  (async () => { const v2 = document.createElement('video'); v2.muted = true; v2.playsInline = true; v2.preload = 'auto'; v2.src = url;
+    try { await new Promise((r, j) => { v2.onloadeddata = r; v2.onerror = j; setTimeout(j, 8000); }); const cells = ov.querySelectorAll('.trimstrip i');
+      for (let k = 0; k < cells.length && ov.isConnected; k++) { v2.currentTime = (k + .5) * dur / cells.length; await new Promise(r => { v2.onseeked = r; setTimeout(r, 3000); }); const c = scaleTo(v2, v2.videoWidth, v2.videoHeight, 160); cells[k].style.backgroundImage = `url(${c.toDataURL('image/jpeg', .6)})`; } } catch (e) {} v2.removeAttribute('src'); })();
+  // dragging the ends, or the whole part
+  let drag = null;
+  const tAt = x => { const r = track.getBoundingClientRect(); return Math.max(0, Math.min(1, (x - r.left) / r.width)) * dur; };
+  track.addEventListener('pointerdown', e => { if (busy) return; const h = e.target.closest('.h'); const t = tAt(e.clientX);
+    drag = h ? (h.classList.contains('l') ? 'l' : 'r') : (t > a && t < b ? 'm' : null); if (!drag) return; drag = { k: drag, t0: t, a0: a, b0: b }; track.setPointerCapture(e.pointerId); vid.pause(); e.preventDefault(); });
+  track.addEventListener('pointermove', e => { if (!drag) return; const t = tAt(e.clientX), dt = t - drag.t0;
+    if (drag.k === 'l') { a = Math.max(0, Math.min(drag.a0 + dt, b - 1)); vid.currentTime = a; }
+    else if (drag.k === 'r') { b = Math.min(dur, Math.max(drag.b0 + dt, a + 1)); vid.currentTime = b; }
+    else { const L = drag.b0 - drag.a0; a = Math.max(0, Math.min(drag.a0 + dt, dur - L)); b = a + L; vid.currentTime = a; }
+    draw(); });
+  const end = () => { if (!drag) return; drag = null; snap(); draw(); }; track.addEventListener('pointerup', end); track.addEventListener('pointercancel', end);
+  vid.addEventListener('timeupdate', () => { head.style.left = (vid.currentTime / dur * 100) + '%'; if (!vid.paused && vid.currentTime >= b) { vid.pause(); } });
+  vid.addEventListener('play', () => ov.classList.add('playing')); vid.addEventListener('pause', () => ov.classList.remove('playing'));
+  const close = f => { vid.pause(); vid.removeAttribute('src'); ov.remove(); URL.revokeObjectURL(url); done(f); };
+  ov.addEventListener('click', e => { const t = e.target.closest('[data-t]'); if (!t) return; const k = t.dataset.t;
+    if (k === 'cancel') { if (busy && busy.stop === false) { busy.stop = true; return; } if (!busy) close(null); return; }
+    if (busy) return;
+    if (k === 'play') { if (!vid.paused) return vid.pause(); if (vid.currentTime < a || vid.currentTime >= b - .1) vid.currentTime = a; vid.play().catch(() => {}); return; }
+    if (k === 'full' || k === 'small') { if (mode === k) return; mode = k; if (!fits(a, b)) b = longest(a); snap(); draw(); return; }
+    if (k === 'use' && fits(a, b)) {
+      if (mode === 'full') { busy = {}; useB.textContent = 'Cutting…'; setTimeout(() => { let f = null; try { f = mp4Cut(ix, a, b); } catch (err) { busy = null; draw(); return toast('Couldn\'t cut that one — try Smaller'); } if (f.size > VIDEO_MAX) { busy = null; draw(); return toast('Still a little big — shorten it a bit'); } close(f); }, 30); return; }
+      vid.pause(); busy = { stop: false }; ov.classList.add('trimbusy'); useB.disabled = true; useB.textContent = 'Shrinking… 0%';
+      videoShrink(file, a, b, p => { useB.textContent = `Shrinking… ${Math.round(p * 100)}%`; }, busy).then(f => {
+        const was = busy; busy = null; ov.classList.remove('trimbusy');
+        if (!f) { draw(); if (was && was.stop) toast('Stopped'); return; }
+        if (f.size > VIDEO_MAX) { draw(); return toast('Still over 50 MB — choose a shorter part'); }
+        close(f); }).catch(err => { busy = null; ov.classList.remove('trimbusy'); draw(); toast(err.message || 'Couldn\'t shrink that one'); });
+    } });
+}); }
 // a photo is stored twice: the photo (2048px) and a small preview (480px) for grids and strips
 async function storePhoto(file, mirror){ let img; try { img = await decodeImage(file); } catch (e) { const asset = await Store.putBlob(file, 'jpg'); return { asset }; }
   const big = await toJpeg(scaleTo(img, img.naturalWidth, img.naturalHeight, 2048, mirror), .9); const small = await toJpeg(scaleTo(img, img.naturalWidth, img.naturalHeight, 480, mirror), .8);
@@ -1331,7 +1526,7 @@ function renderMemories(app){
     ${anniMoments.length ? `<div class="l">${fmtD(anniDay)} · ${D.monthsSince(anniDay)} months</div><div class="feed" style="margin-top:-8px">${anniMoments.map(momentRow).join('')}</div>` : ''}
     ${ms.filter(m => !anniMoments.includes(m)).length ? `<div class="l">Moments</div><div class="feed" style="margin-top:-8px">${ms.filter(m => !anniMoments.includes(m)).sort((a,b) => b.date.localeCompare(a.date)).slice(0,4).map(momentRow).join('')}</div>` : future ? '<div class="empty">Nothing here yet.</div>' : ''}
     ${!future ? `<button class="row" style="font-size:13.5px" data-go="chat"><span>Chat</span><span class="l">${D.bubbles().filter(b => isoDate(new Date(b.at)).startsWith(ym)).length} said or thought ›</span></button>` : ''}
-    <div class="list" style="font-size:13.5px;margin-top:-6px"><button class="row" data-go="songs"><span>Our songs</span><span class="l">${allSongs().length} ›</span></button><button class="row" data-go="map"><span>Our map</span><span class="l">${D.trips().length} trip${D.trips().length === 1 ? '' : 's'} ›</span></button><button class="row" data-go="lists"><span>Things to do together</span><span class="l">${D.listItems().filter(i => !i.done).length} ›</span></button><button class="row" data-act="importStart"><span>Import photos</span><span class="l">sorts them into days ›</span></button></div>
+    <div class="list" style="font-size:13.5px;margin-top:-6px"><button class="row" data-go="songs"><span>Our songs</span><span class="l">${allSongs().length} ›</span></button><button class="row" data-go="map"><span>Our map</span><span class="l">${D.trips().length} trip${D.trips().length === 1 ? '' : 's'} ›</span></button><button class="row" data-go="lists"><span>Things to do together</span><span class="l">${D.listItems().filter(i => !i.done).length} ›</span></button><button class="row" data-act="importStart"><span>Import photos & videos</span><span class="l">sorts them into days ›</span></button></div>
     ${!future ? `<div class="hr"></div><div class="l">All time</div><div class="stats" style="margin-top:-8px"><div><b>${all.trips}</b><span class="l">trip${all.trips===1?'':'s'}</span></div><div><b>${all.days}</b><span class="l">days</span></div><div><b>${all.moments}</b><span class="l">moments</span></div>${months != null ? `<div><b>${D.monthsSince(today())}</b><span class="l">months</span></div>` : ''}</div>` : ''}
   </div>${nav('memories')}`;
 }
@@ -1418,7 +1613,7 @@ ACT.chatThink = () => { chatThink = !chatThink; render(); const i = $('#chat-in'
 ACT.chatSend = async () => { const el = $('#chat-in'); const text = (el ? el.value : chatDraft).trim(); if (!text) return; chatDraft = ''; await Store.put('bubbles', { id: Store.uid(), userId: D.me().id, kind: chatThink ? 'think' : 'say', text, at: Date.now() }); chatThink = false; render(); const i = $('#chat-in'); if (i) i.focus(); };
 ACT.chatPick = () => $('#chat-file').click();
 ACT.chatFiles = async (a, el) => { const files = Array.from(el.files || []); if (!files.length) return; const text = chatDraft.trim(); chatDraft = ''; toast(files.length === 1 ? 'Sending…' : 'Sending ' + files.length + ' photos…');
-  for (const [i, f] of files.entries()) { if (tooBig(f)) { toast(`That video is ${Math.round(f.size / 1048576)} MB — the limit is 50 MB`); continue; } const vid = isVideo(f); const ph = vid ? await storeVideo(f) : await storePhoto(f); await Store.put('bubbles', Object.assign({ id: Store.uid(), userId: D.me().id, kind: 'say', photo: ph.asset, thumb: ph.thumb, text: i === 0 && text ? text : vid ? '🎬 Video' : '📷 Photo', auto: !(i === 0 && text), at: Date.now() + i }, vid ? { video: true, dur: ph.dur } : {})); }
+  for (let [i, f] of files.entries()) { if (tooBig(f)) { f = await fitVideo(f); if (!f) continue; } const vid = isVideo(f); const ph = vid ? await storeVideo(f) : await storePhoto(f); await Store.put('bubbles', Object.assign({ id: Store.uid(), userId: D.me().id, kind: 'say', photo: ph.asset, thumb: ph.thumb, text: i === 0 && text ? text : vid ? '🎬 Video' : '📷 Photo', auto: !(i === 0 && text), at: Date.now() + i }, vid ? { video: true, dur: ph.dur } : {})); }
   render(); };
 ACT.chatStk = () => openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Send a sticker</span></div>${stickerTray('chatSendStk')}<div class="l">Hold one of yours to remove it.</div>`, sh => { sh.dataset.tray = 'chatSendStk'; bindHold(sh); });
 ACT.chatSendStk = async arg => { const s = stkFrom(arg); closeSheet(); await Store.put('bubbles', { id: Store.uid(), userId: D.me().id, kind: 'say', sticker: s, text: 'sent a sticker', auto: true, at: Date.now() }); render(); };
@@ -1556,19 +1751,51 @@ const imgTime = dt => { const h = +dt.slice(11, 13), m = dt.slice(14, 16); retur
 const dtMin = dt => +dt.slice(11, 13) * 60 + +dt.slice(14, 16);
 const dtMs = dt => new Date(+dt.slice(0, 4), +dt.slice(5, 7) - 1, +dt.slice(8, 10), +dt.slice(11, 13), +dt.slice(14, 16)).getTime();
 function kmBetween(a, b){ const R = 6371, r = x => x * Math.PI / 180; const dLat = r(b.lat - a.lat), dLon = r(b.lon - a.lon); const h = Math.sin(dLat / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(dLon / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); }
+// a video's own "taken at" time and place: iPhone videos keep them in the movie's header (moov) —
+// com.apple.quicktime.creationdate (local time, as on the camera) and .location.ISO6709; other phones: mvhd (UTC) and ©xyz
+async function readVideoMeta(file){
+  const out = {}; try {
+    const rd = async (a, b) => new DataView(await file.slice(a, b).arrayBuffer());
+    let pos = 0, moov = null; for (let n = 0; n < 64 && pos + 8 <= file.size; n++) { const h = await rd(pos, pos + 16); let size = h.getUint32(0); const type = String.fromCharCode(h.getUint8(4), h.getUint8(5), h.getUint8(6), h.getUint8(7)); let hl = 8;
+      if (size === 1 && h.byteLength >= 16) { size = h.getUint32(8) * 4294967296 + h.getUint32(12); hl = 16; } else if (size === 0) size = file.size - pos; if (size < hl) break;
+      if (type === 'moov') { if (size < 40e6) moov = await rd(pos, pos + size); break; } pos += size; }
+    if (!moov) return out; const u8 = new Uint8Array(moov.buffer); const T = o => String.fromCharCode(u8[o], u8[o + 1], u8[o + 2], u8[o + 3]); const keys = []; const vals = {};
+    const txt = (a, b) => { try { return new TextDecoder().decode(u8.subarray(a, b)).replace(/\0+$/, ''); } catch (e) { return ''; } };
+    const walk = (a, b, depth) => { let o = a; while (o + 8 <= b && depth < 8) { const size = moov.getUint32(o), type = T(o + 4); if (size < 8 || o + size > b) break;
+      if (type === 'mvhd') { const ver = u8[o + 8]; const secs = ver === 1 ? moov.getUint32(o + 12) * 4294967296 + moov.getUint32(o + 16) : moov.getUint32(o + 12); if (secs > 3e9) out.utc = new Date(Date.UTC(1904, 0, 1) + secs * 1000); }
+      else if (type === 'udta') walk(o + 8, o + size, depth + 1);
+      else if (type === 'meta') { const full = ['hdlr', 'keys', 'ilst'].includes(T(o + 12)) ? 8 : 12; walk(o + full, o + size, depth + 1); }
+      else if (type === 'keys') { const cnt = moov.getUint32(o + 12); let k = o + 16; for (let i = 0; i < cnt && k + 8 <= o + size; i++) { const ks = moov.getUint32(k); if (ks < 8) break; keys.push(txt(k + 8, k + ks)); k += ks; } }
+      else if (type === 'ilst') { let k = o + 8; while (k + 8 <= o + size) { const is = moov.getUint32(k), idx = moov.getUint32(k + 4); if (is < 8) break; let d = k + 8; while (d + 16 <= k + is) { const ds = moov.getUint32(d); if (ds < 16) break; if (T(d + 4) === 'data') vals[idx] = txt(d + 16, d + ds); d += ds; } k += is; } }
+      else if (u8[o + 4] === 0xA9 && T(o + 4).slice(1) === 'xyz') out.xyz = txt(o + 12, o + size);
+      o += size; } };
+    walk(8, moov.byteLength, 0);
+    keys.forEach((k, i) => { if (k === 'com.apple.quicktime.creationdate') out.cd = vals[i + 1]; if (k === 'com.apple.quicktime.location.ISO6709') out.xyz = vals[i + 1] || out.xyz; });
+    const pad = n => String(n).padStart(2, '0');
+    const m = (out.cd || '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
+    if (m) { out.dt = `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}`; out.dts = out.dt + ':' + (m[6] || '00'); }
+    else if (out.utc) { const d = out.utc; out.dt = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; out.dts = out.dt + ':' + pad(d.getSeconds()); }
+    const g = (out.xyz || '').match(/^([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)/); if (g && (+g[1] || +g[2])) { out.lat = +g[1]; out.lon = +g[2]; }
+  } catch (e) {} return out; }
 async function thumbOf(file, info){ try { const img = await createImageBitmap(file); if (info) { info.w = img.width; info.h = img.height; } const s = 220 / Math.max(img.width, img.height); const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(img.width * Math.min(1, s))); c.height = Math.max(1, Math.round(img.height * Math.min(1, s))); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); if (img.close) img.close(); const b = await new Promise(r => c.toBlob(r, 'image/jpeg', .7)); return URL.createObjectURL(b); } catch (e) { return URL.createObjectURL(file); } }
 
 let imp = null;   // the import in progress; lives only on this phone until "Make memories"
 // start an import from a trip (photos outside its dates start skipped) or from anywhere ('' = sorted by date into whatever trip matches)
-function pickImages(cb){ const f = document.createElement('input'); f.type = 'file'; f.accept = 'image/*'; f.multiple = true; f.style.display = 'none'; document.body.appendChild(f); f.onchange = () => { const files = Array.from(f.files || []); f.remove(); if (files.length) cb(files); }; f.click(); }
+function pickImages(cb){ const f = document.createElement('input'); f.type = 'file'; f.accept = 'image/*,video/*'; f.multiple = true; f.style.display = 'none'; document.body.appendChild(f); f.onchange = () => { const files = Array.from(f.files || []); f.remove(); if (files.length) cb(files); }; f.click(); }
 ACT.importStart = tripId => { closeSheet(); pickImages(files => importRead(tripId || '', files)); };
 ACT.importMore = () => pickImages(files => importRead(imp.tripId, files, true));
 let impSeq = 0;
+// "3 photos", "1 video", "3 photos · 1 video"
+const pvCount = xs => { const v = xs.filter(x => x.video).length, ph = xs.length - v; return [ph || !v ? ph + ' photo' + (ph === 1 ? '' : 's') : '', v ? v + ' video' + (v === 1 ? '' : 's') : ''].filter(Boolean).join(' · '); };
 async function importRead(tripId, files, more){
   if (!more || !imp) imp = { tripId, key: tripId || 'any', items: [], groups: [], sel: [] };
   imp.stage = 'reading'; imp.done = 0; imp.total = files.length; if (route.name !== 'import') go('import', { id: imp.key }); else render();
   const now = Date.now(); const fresh = [];
   for (const [i, file] of files.entries()) {
+    if (isVideo(file)) { const vm = await readVideoMeta(file); let dt = vm.dt || ''; if (!dt && file.lastModified && now - file.lastModified > 10 * 60000) { const d = new Date(file.lastModified); dt = isoDate(d) + 'T' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
+      const st = await videoStill(file); const thumb = st && st.still ? URL.createObjectURL(st.still) : '';
+      const it = { id: 'i' + (impSeq++), file, video: true, big: tooBig(file), dur: st ? Math.round(st.dur) : 0, dt, lat: vm.lat, lon: vm.lon, screen: false, hasExif: !!vm.dt, thumb, out: false, sig: vm.dts && st && st.w ? vm.dts + '|' + Math.max(st.w, st.h) + 'x' + Math.min(st.w, st.h) + '|v' + Math.round(st.dur) : '' }; imp.items.push(it); fresh.push(it);
+      imp.done = i + 1; const pr = $('#imp-prog'); if (pr) pr.textContent = `Reading ${imp.done} of ${imp.total}…`; continue; }
     let ex = null; try { ex = readExif(await file.slice(0, 512 * 1024).arrayBuffer()); if (!ex && /hei[cf]/i.test(file.type + file.name) && file.size < 25e6) ex = readExif(await file.arrayBuffer()); } catch (e) {}
     ex = ex || {}; let dt = ex.dt || '';
     // no EXIF time: fall back to the file's date, unless that's just "now" (the picker re-saved it)
@@ -1591,11 +1818,11 @@ function newGroup(kind, date, items){ return { id: 'g' + (impSeq++), kind, date,
 async function aHash(src){ try { const img = new Image(); img.src = src; await img.decode(); const c = document.createElement('canvas'); c.width = 9; c.height = 8; const x = c.getContext('2d'); x.drawImage(img, 0, 0, 9, 8); const d = x.getImageData(0, 0, 9, 8).data; let bits = ''; for (let r = 0; r < 8; r++) for (let k = 0; k < 8; k++) { const i = (r * 9 + k) * 4, j = i + 4; bits += (d[i] + d[i + 1] + d[i + 2]) > (d[j] + d[j + 1] + d[j + 2]) ? '1' : '0'; } return bits; } catch (e) { return null; } }
 const hamming = (a, b) => { let n = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) n++; return n; };
 async function markDups(items){
-  const have = new Set(); const byMinute = {}; D.moments().forEach(m => (m.photos || []).forEach(p => { if (p.video) return; if (p.sig) have.add(p.sig); else if (p.taken) (byMinute[m.date + 'T' + p.taken] = byMinute[m.date + 'T' + p.taken] || []).push(p); }));
+  const have = new Set(); const byMinute = {}; D.moments().forEach(m => (m.photos || []).forEach(p => { if (p.sig) have.add(p.sig); if (p.video) return; else if (p.taken) (byMinute[m.date + 'T' + p.taken] = byMinute[m.date + 'T' + p.taken] || []).push(p); }));
   const seen = new Set(imp.items.filter(x => !items.includes(x) && x.sig).map(x => x.sig)); const hashes = new Map();
   for (const x of items) {
     if (x.sig && (have.has(x.sig) || seen.has(x.sig))) { x.dup = true; continue; } if (x.sig) seen.add(x.sig);
-    const cands = x.dt ? byMinute[x.dt.slice(0, 16)] : null; if (!cands || !cands.length) continue;
+    const cands = x.dt && !x.video ? byMinute[x.dt.slice(0, 16)] : null; if (!cands || !cands.length) continue;
     const h = await aHash(x.thumb); if (!h) continue;
     for (const p of cands) { if (!hashes.has(p.asset)) { const u = await previewUrl(p.asset, p.thumb); hashes.set(p.asset, u ? await aHash(u) : null); } const ph = hashes.get(p.asset); if (ph && hamming(h, ph) <= 6) { x.dup = true; break; } } } }
 function buildGroups(items){
@@ -1651,25 +1878,25 @@ async function importPlaces(){ if (placing) return; placing = true; const mine =
     if (route.name === 'import' && !sheet && !(document.activeElement && document.activeElement.classList.contains('imptitle'))) render(); await new Promise(r => setTimeout(r, 1100)); } } finally { placing = false; } }
 function renderImport(app){
   const t = impTrip() || (route.id && route.id !== 'any' ? D.trip(route.id) : null); const back = t ? `trip/${t.id}` : 'home';
-  if (!imp || imp.key !== route.id) { app.innerHTML = `<div class="screen"><div class="bar"><button data-go="${back}">‹ ${t ? esc(t.city) : 'Home'}</button><span>Import</span></div><h1 class="hd">Import photos</h1><div class="sub" style="text-align:left">Pick a pile of photos. They're sorted into days and moments for you to check before anything is saved.</div><button class="btn block" data-act="importStart|${t ? t.id : ''}">Choose photos</button></div>${nav(t ? 'trips' : 'home')}`; return; }
+  if (!imp || imp.key !== route.id) { app.innerHTML = `<div class="screen"><div class="bar"><button data-go="${back}">‹ ${t ? esc(t.city) : 'Home'}</button><span>Import</span></div><h1 class="hd">Import photos & videos</h1><div class="sub" style="text-align:left">Pick a pile of photos and videos (up to 50 MB each). They're sorted into days and moments for you to check before anything is saved.</div><button class="btn block" data-act="importStart|${t ? t.id : ''}">Choose photos & videos</button></div>${nav(t ? 'trips' : 'home')}`; return; }
   if (imp.stage === 'reading') { app.innerHTML = `<div class="screen"><div class="bar"><span></span><span>Import</span></div><h1 class="hd">Sorting your photos</h1><div class="glass"><div class="row"><span id="imp-prog">Reading ${imp.done} of ${imp.total}…</span><span class="spin"></span></div><div class="l" style="margin-top:6px">Nothing is saved yet. Keep the app open.</div></div></div>`; return; }
   if (imp.stage === 'saving') { app.innerHTML = `<div class="screen"><div class="bar"><span></span><span>Import</span></div><h1 class="hd">Making memories</h1><div class="glass"><div class="row"><span id="imp-prog">${imp.saved || 0} of ${imp.toSave || 0}…</span><span class="spin"></span></div><div class="l" style="margin-top:6px">Keep the app open — photos upload in the background after.</div></div></div>`; return; }
   const its = imp.items; const withT = its.filter(x => x.hasExif).length, withL = its.filter(x => x.lat != null).length; const sel = imp.sel;
   imp.groups = imp.groups.filter(g => g.items.length);
   const days = [...new Set(imp.groups.map(g => g.date))].sort(); const live = imp.groups.filter(g => !g.skip && groupItems(g).some(x => !x.out));
   const card = (g, i, list) => { const gi = groupItems(g); const sp = groupSpan(g); const n = gi.filter(x => !x.out).length; const nxt = list[i + 1];
-    if (g.skip) return `<button class="glass impg skip row" data-act="impSkip|${g.id}"><span class="itick"></span><span style="flex:1;text-align:left"><b style="font-weight:500">${esc(g.title || (g.kind === 'unknown' ? 'No time' : 'Moment'))}</b> <span class="l">· ${gi.length} photo${gi.length === 1 ? '' : 's'}${g.outside ? ' · outside the trip dates' : ''}</span></span><span class="l">Skipped · tap to include</span></button>`;
-    const meta = `${g.kind === 'unknown' ? 'No time on these · ' : g.kind === 'screens' ? 'Screenshots · ' : g.kind === 'dups' ? 'Already in the app — skipped so nothing doubles up · ' : sp ? imgTime(sp.a) + (sp.b !== sp.a ? ' – ' + imgTime(sp.b) : '') + ' · ' : ''}${n} photo${n === 1 ? '' : 's'}${g.place && (g.place.name || g.place.area) ? ' · 📍 ' + esc(g.place.name || g.place.area) : ''}${g.from === 'plan' && !g.edited ? ' · from your plans' : ''}`;
-    const strip = gi.map((x, k) => `<button class="ph ${x.out ? 'out' : ''} ${sel.includes(x.id) ? 'sel' : ''}" data-act="impTap|${x.id}"><img src="${x.thumb}" alt="">${x.dt && g.kind !== 'unknown' ? `<span>${imgTime(x.dt)}</span>` : ''}</button>`).join('');
+    if (g.skip) return `<button class="glass impg skip row" data-act="impSkip|${g.id}"><span class="itick"></span><span style="flex:1;text-align:left"><b style="font-weight:500">${esc(g.title || (g.kind === 'unknown' ? 'No time' : 'Moment'))}</b> <span class="l">· ${pvCount(gi)}${g.outside ? ' · outside the trip dates' : ''}</span></span><span class="l">Skipped · tap to include</span></button>`;
+    const meta = `${g.kind === 'unknown' ? 'No time on these · ' : g.kind === 'screens' ? 'Screenshots · ' : g.kind === 'dups' ? 'Already in the app — skipped so nothing doubles up · ' : sp ? imgTime(sp.a) + (sp.b !== sp.a ? ' – ' + imgTime(sp.b) : '') + ' · ' : ''}${pvCount(gi.filter(x => !x.out))}${g.place && (g.place.name || g.place.area) ? ' · 📍 ' + esc(g.place.name || g.place.area) : ''}${g.from === 'plan' && !g.edited ? ' · from your plans' : ''}`;
+    const strip = gi.map((x, k) => `<button class="ph ${x.out ? 'out' : ''} ${sel.includes(x.id) ? 'sel' : ''} ${x.big ? 'big' : ''}" data-act="impTap|${x.id}">${x.thumb ? `<img src="${x.thumb}" alt="">` : '<i class="vph"></i>'}${x.big ? '<em class="trimbadge">✂ Trim</em>' : ''}${x.video ? `<em class="vbadge">▶${x.dur ? ' ' + Math.floor(x.dur / 60) + ':' + String(x.dur % 60).padStart(2, '0') : ''}</em>` : ''}${x.dt && g.kind !== 'unknown' ? `<span>${imgTime(x.dt)}</span>` : ''}</button>`).join('');
     return `<div class="glass impg"><div class="row" style="gap:10px;align-items:flex-start"><button class="itick on" data-act="impSkip|${g.id}" aria-label="Skip this moment">✓</button><div style="flex:1;min-width:0"><input class="in imptitle" data-act="impTitle|${g.id}" data-on="change" value="${esc(g.title || '')}" placeholder="${g.kind === 'unknown' ? 'What were these?' : 'Name this moment'}"><div class="l" style="margin-top:4px">${meta}</div></div></div>
       <div class="impstrip">${strip}</div>
       <div class="row" style="margin-top:8px;gap:6px;justify-content:flex-start;flex-wrap:wrap">${g.kind !== 'time' && g.kind !== 'dups' ? `<input class="in" type="date" value="${g.date}" data-act="impDate|${g.id}" data-on="change" style="width:auto;padding:5px 8px;font-size:12px">` : ''}${nxt && nxt.kind === 'time' && g.kind === 'time' && !nxt.skip ? `<button class="chip" data-act="impMerge|${g.id}">Merge with next</button>` : ''}<span class="l" style="margin-left:auto">tap photos to move them</span></div></div>`; };
-  app.innerHTML = `<div class="screen"><div class="bar"><button data-act="impCancel">Cancel</button><span>${its.length} photos</span></div><h1 class="hd">Check your moments</h1>
+  app.innerHTML = `<div class="screen"><div class="bar"><button data-act="impCancel">Cancel</button><span>${pvCount(its)}</span></div><h1 class="hd">Check your moments</h1>
     <div class="glass deep" style="font-size:12.5px"><div class="row"><span>Time taken</span><span class="l">${withT} of ${its.length}</span></div><div class="row" style="margin-top:4px"><span>Location</span><span class="l">${withL} of ${its.length}</span></div>${!withL ? `<div class="l" style="margin-top:6px">Your phone didn't share locations, so places aren't guessed. Choosing photos through Files usually keeps them.</div>` : ''}${withT < its.length ? `<div class="l" style="margin-top:6px">Photos without a time are grouped at the end — pick their day there.</div>` : ''}</div>
-    <button class="btn lite block" data-act="importMore">+ Add more photos</button>
+    <button class="btn lite block" data-act="importMore">+ Add more</button>
     ${days.map(d => { const list = imp.groups.filter(g => g.date === d && g.kind === 'time'); const all = list.concat(imp.groups.filter(g => g.date === d && g.kind !== 'time')); return all.length ? `<div class="l">${fmtDow(d)} ${MON[parseDate(d).getMonth()]}${t && d >= t.start && d <= t.end ? ' · day ' + (daysBetween(t.start, d) + 1) : ''}${D.tripForDate(d) && (!t || D.tripForDate(d).id !== t.id) ? ' · ' + esc(D.tripForDate(d).city) : ''}</div>${all.map((g, i) => card(g, i, all)).join('')}` : ''; }).join('')}
     ${sel.length ? `<div class="impbar selbar"><button class="l" style="white-space:nowrap" data-act="impSelClear">${sel.length} selected ✕</button><span style="display:flex;gap:6px;justify-content:flex-end"><button class="chip on" data-act="impSelNew">New moment</button><button class="chip" data-act="impSelMove">Move to…</button><button class="chip" data-act="impSelOut">Leave out</button></span></div>`
-      : `<div class="impbar"><span class="l">${live.length} memor${live.length === 1 ? 'y' : 'ies'} · ${live.reduce((s, g) => s + groupItems(g).filter(x => !x.out).length, 0)} photos</span><button class="btn sm" data-act="impSave" ${live.length ? '' : 'disabled'}>Make memories</button></div>`}
+      : `<div class="impbar"><span class="l">${live.length} memor${live.length === 1 ? 'y' : 'ies'} · ${pvCount(live.flatMap(g => groupItems(g).filter(x => !x.out)))}</span><button class="btn sm" data-act="impSave" ${live.length ? '' : 'disabled'}>Make memories</button></div>`}
   </div>${nav(t ? 'trips' : 'home')}`;
 }
 const impG = id => imp && imp.groups.find(g => g.id === id);
@@ -1677,7 +1904,8 @@ const impGroupOf = id => imp.groups.find(g => g.items.includes(id));
 ACT.impTitle = (id, el) => { const g = impG(id); if (g) { g.title = el.value.trim(); g.edited = true; } };
 ACT.impSkip = id => { const g = impG(id); if (g) { g.skip = !g.skip; render(); } };
 // tap a photo: select it (a left-out photo comes back instead)
-ACT.impTap = id => { const x = imp && imp.items.find(y => y.id === id); if (!x) return; if (x.out) { x.out = false; return render(); } const i = imp.sel.indexOf(id); if (i >= 0) imp.sel.splice(i, 1); else imp.sel.push(id); render(); };
+ACT.impTap = id => { const x = imp && imp.items.find(y => y.id === id); if (!x) return;
+  if (x.big && !x.out && !imp.sel.length) { const mine = imp; return fitVideo(x.file).then(async f => { if (!f || imp !== mine) return; x.file = f; x.big = false; const st = await videoStill(f); if (st) { x.dur = Math.round(st.dur); if (st.still) { try { URL.revokeObjectURL(x.thumb); } catch (e) {} x.thumb = URL.createObjectURL(st.still); } } render(); }); } if (x.out) { x.out = false; return render(); } const i = imp.sel.indexOf(id); if (i >= 0) imp.sel.splice(i, 1); else imp.sel.push(id); render(); };
 ACT.impSelClear = () => { imp.sel = []; render(); };
 ACT.impSelOut = () => { imp.sel.forEach(id => { const x = imp.items.find(y => y.id === id); if (x) x.out = true; }); imp.sel = []; render(); };
 function takeSelected(){ const ids = imp.sel.slice(); imp.groups.forEach(g => { g.items = g.items.filter(id => !ids.includes(id)); }); imp.sel = []; return ids.map(id => imp.items.find(x => x.id === id)).filter(Boolean).sort(byTime); }
@@ -1692,12 +1920,14 @@ ACT.impCut = arg => { const [id, k] = arg.split(','); const g = impG(id); if (!g
   const ng = { id: 'g' + (impSeq++), kind: g.kind, date: g.date, items: g.items.slice(+k), place: g.place, outside: g.outside }; g.items = g.items.slice(0, +k); g.edited = false; imp.groups.splice(imp.groups.indexOf(g) + 1, 0, ng); importGuess(g); importGuess(ng); render(); };
 ACT.impCancel = async () => { if (!await ask('Stop importing?', { sub: 'Nothing has been saved.', ok: 'Stop', no: 'Keep going' })) return; const t = impTrip(); imp.items.forEach(x => { try { URL.revokeObjectURL(x.thumb); } catch (e) {} }); imp = null; if (t) go('trip', { id: t.id }); else go('home'); };
 ACT.impSave = async () => {
+  const long = imp.groups.filter(g => !g.skip).flatMap(g => groupItems(g)).filter(x => x.big && !x.out);
+  if (long.length) { if (!await ask(long.length === 1 ? 'A video is too long' : long.length + ' videos are too long', { sub: 'Tap ✂ Trim on ' + (long.length === 1 ? 'it' : 'each') + ' to choose the part to keep, or save the rest without ' + (long.length === 1 ? 'it' : 'them') + '.', ok: 'Save without', no: 'Trim first' })) return; long.forEach(x => x.out = true); }
   const live = imp.groups.filter(g => !g.skip && groupItems(g).some(x => !x.out)); if (!live.length) return;
   const me = D.me(); const t0 = impTrip(); const mine = imp; imp.stage = 'saving'; imp.saved = 0; imp.toSave = live.reduce((s, g) => s + groupItems(g).filter(x => !x.out).length, 0); render();
   let made = 0; const tripsUsed = new Set();
   for (const g of live) {
     const photos = [];
-    for (const x of groupItems(g).filter(x => !x.out)) { const ph = await storePhoto(x.file); photos.push({ asset: ph.asset, thumb: ph.thumb, polaroid: false, stickers: [], taken: x.dt ? x.dt.slice(11, 16) : '', sig: x.sig || '' }); mine.saved++; const pr = $('#imp-prog'); if (pr) pr.textContent = `${mine.saved} of ${mine.toSave}…`; }
+    for (const x of groupItems(g).filter(x => !x.out)) { let ph; try { ph = x.video ? await storeVideo(x.file) : await storePhoto(x.file); } catch (e) { mine.saved++; continue; } photos.push(Object.assign({ asset: ph.asset, thumb: ph.thumb, polaroid: false, stickers: [], taken: x.dt ? x.dt.slice(11, 16) : '', sig: x.sig || '' }, x.video ? { video: true, dur: ph.dur, bytes: ph.bytes } : {})); mine.saved++; const pr = $('#imp-prog'); if (pr) pr.textContent = `${mine.saved} of ${mine.toSave}…`; }
     const sp = groupSpan(g); const trip = t0 && g.date >= t0.start && g.date <= t0.end ? t0 : D.tripForDate(g.date); if (trip) tripsUsed.add(trip.id);
     await Store.put('moments', { id: Store.uid(), tripId: trip ? trip.id : '', date: g.date, authorId: me.id, kind: 'moment', text: g.title || '', photos, items: [], time: sp && g.kind === 'time' ? sp.a.slice(11, 16) : '', place: g.place && g.place.lat != null ? g.place : null, imported: true, createdAt: sp && g.kind === 'time' ? dtMs(sp.a) : Date.now() + made, addedAt: Date.now() });
     made++;
@@ -1709,7 +1939,7 @@ ACT.impSave = async () => {
   toast(made + ' memor' + (made === 1 ? 'y' : 'ies') + ' added'); if (tripId) go('days', { id: tripId }); else go('memories');
 };
 // the + on Home: one memory, or a pile of photos
-ACT.homeAdd = () => openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Add</span></div><div class="list" style="font-size:13.5px">${rowBtn('newMoment', 'New memory', 'A message, photos, voice, song or cost')}${rowBtn('importStart', 'Import photos', 'A pile of photos, sorted into days and moments')}${rowBtn('tripAdd', 'New trip', 'City and dates, or from a booking')}${rowBtn('bookingSheet', 'Add a booking', 'Tickets, reservations, flights, stays — from the email or PDF')}${rowBtn('spendNew', 'Log my spending', 'My money — only you see it')}</div>`);
+ACT.homeAdd = () => openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Add</span></div><div class="list" style="font-size:13.5px">${rowBtn('newMoment', 'New memory', 'A message, photos, voice, song or cost')}${rowBtn('importStart', 'Import photos & videos', 'A pile of them, sorted into days and moments')}${rowBtn('tripAdd', 'New trip', 'City and dates, or from a booking')}${rowBtn('bookingSheet', 'Add a booking', 'Tickets, reservations, flights, stays — from the email or PDF')}${rowBtn('spendNew', 'Log my spending', 'My money — only you see it')}</div>`);
 
 // ---------- V2.9: export everything / restore ----------
 // One zip: every photo, voice note, chat photo and sticker in folders by date, readable text files,
@@ -2085,7 +2315,7 @@ ACT.storageSheet = async () => { openSheet(`<div class="bar"><button data-act="c
     <div class="sub" style="text-align:left">${pct > 75 ? 'Getting full. Deleting a few long videos frees the most space; Supabase\'s Pro plan has 100 GB.' : 'Videos take the most room — a minute can be 50 MB, about 150 photos.'}</div>`; };
 
 // ---------- What's new (shown once per phone after an update; Profile → What's new replays it) ----------
-const APP_VERSION = '2.14'; const WN_VERSIONS = ['2.10', '2.11', '2.12', '2.13', '2.14'];
+const APP_VERSION = '2.15'; const WN_VERSIONS = ['2.10', '2.11', '2.12', '2.13', '2.14', '2.15'];
 let wnIdx = 0, wnForce = false;
 function needsWhatsNew(){ if (window.DJ_SKIP_WHATSNEW && !wnForce) return false; if (wnForce) return true; try { return localStorage.getItem('dj.seenVer') !== APP_VERSION; } catch (e) { return false; } }
 function markWhatsNewSeen(){ try { localStorage.setItem('dj.seenVer', APP_VERSION); } catch (e) {} }
@@ -2130,7 +2360,11 @@ function whatsNewCards(){ const [a, b] = D.users2(); const o = D.other() || b ||
     ['Our songs → Spotify', `Our songs has a button that makes a Spotify playlist of every song from your memories — and after that, “Update playlist” adds only the new ones. Importing photos also skips any that are already in the app.`,
       `<div class="mini"><div class="row"><span style="font-weight:500">Our songs ♡ on Spotify</span><span class="l">12 songs</span></div><div class="btn sm" style="margin-top:10px;text-align:center">Update playlist · 3 new</div></div>`],
   ].map(c => c.concat('2.14'));
-  return v214.concat(v213).concat(v212).concat(v211).concat([
+  const v215 = [
+    ['Long videos: pick the part', `Videos go everywhere photos do now — memories, chat, Home and Import, which sorts them into days with your photos. If one's over 50 MB, choose the part to keep, like Instagram: drag the ends. <b>Full quality</b> cuts it straight out (about 45 seconds of 1080p); <b>Smaller</b> fits up to 5 minutes at 720p, but plays through once to shrink it.`,
+      `<div class="mini" style="background:#111;color:#fff"><div class="row" style="font-size:13px"><b style="font-size:17px;font-weight:500">0:38</b><span style="opacity:.7">0:12 – 0:50 of 2:10</span></div><div style="position:relative;height:44px;margin-top:10px;border-radius:8px;overflow:hidden;background:linear-gradient(90deg,#6F9C8E,#B9D3C9,#C98F7A,#8E6A7E,#C4D4E6)"><div style="position:absolute;top:0;bottom:0;left:10%;width:30%;border:3px solid #F6E39A;border-left-width:12px;border-right-width:12px;border-radius:8px;box-shadow:0 0 0 999px rgba(0,0,0,.55)"></div></div><div style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12px"><div style="flex:1;height:5px;border-radius:3px;background:rgba(255,255,255,.15)"><i style="display:block;width:82%;height:100%;border-radius:3px;background:#F6E39A"></i></div>41 MB of 50</div></div>`],
+  ].map(c => c.concat('2.15'));
+  return v215.concat(v214).concat(v213).concat(v212).concat(v211).concat([
     ['Chat, with photos', `Chat has its own typing box now. Send messages, 💭 thoughts, photos and stickers — photos stay, and you can save them to your phone. You can also send a photo from your pal on Home.`,
       `<div class="mini" style="display:flex;flex-direction:column;gap:8px">${msg(o, `<div class="b">look where we ate 😭</div>`)}${msg(o, `<div class="cph" style="width:130px;height:96px;background:linear-gradient(135deg,#E9C9A8,#C98F7A)"></div>`)}${msg(me, `<div class="b">going back tomorrow</div>`, true)}<div class="composer" style="margin-top:4px"><span class="cbtn">◫</span><span class="cbtn">☺</span><span class="in" style="color:var(--mu);font-size:14px">say something</span><span class="btn sm">Send</span></div></div>`],
     ['Your own stickers', `Make stickers out of your photos: in Photos, press and hold one of you until it lifts out, tap <b>Copy</b>, then <b>Paste</b> here. They're shared — use them on photos and in chat. Hold one to remove it.`,
@@ -2167,5 +2401,5 @@ window.addEventListener('hashchange', () => { const [n, id] = location.hash.slic
 })();
 Store.onChange(() => { if (viewer) drawViewer(true); else if (!sheet) render(); });
 Store.ready = Store.connect(CFG).then(async () => { const [n, id] = location.hash.slice(1).split('/'); route = { name: n || 'home', id }; render(); await spCallback().catch(() => {}); if (route.name === 'songs') render(); setInterval(applySky, 60000); syncIcs(false); checkPush(); setInterval(() => syncIcs(false), 3600000); if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(()=>{}); });
-window.DJ = { D, go, ACT, render, parseConfirmation, skyMode, Store, imp: () => imp, pdfText, storePhoto, navStack: () => navStack };
+window.DJ = { D, go, ACT, render, parseConfirmation, skyMode, Store, imp: () => imp, readVideoMeta, mp4Index, mp4Cut, mp4Pick, fitVideo, pdfText, storePhoto, navStack: () => navStack };
 })();

@@ -151,3 +151,10 @@ Two evenings of feedback rounds on real screens produced V2:
 - Our songs → Spotify: connect once, "Make playlist" creates a private, shared "Our songs ♡"; "Update" adds only songs not already in it.
 - What's new cards now size themselves to each phone.
 - Update notifications: app/version.json says whether a release is a "build" (notify: true, with the message) or a quiet fix (notify: false). Netlify tells the notify function when a deploy finishes; it sends once per version.
+- (V2.14c) Videos everywhere photos go: every picker (Photo/video, Polaroid, Home's photo share, chat, Import) shows videos. Import sorts videos with the photos: it reads when and where each video was taken from the video itself (iPhone's creation date and location; other phones' movie header), shows ▶ and length in the review, sets aside videos already in the app, and leaves out any over 50 MB.
+
+## V2.15 (long videos: choose the part)
+- A video over 50 MB (the free plan's limit per file) opens "Choose the part", like Instagram: a filmstrip with yellow ends to drag (or drag the whole part), play just that part, and a meter showing how many MB it will be. Works in memories, chat, Home, and Import (long videos wait in the review with ✂ Trim; saving asks before leaving them out).
+- Full quality: the part is cut straight out of the MP4/MOV with no re-encoding (instant; frame-for-frame the original, date and place kept). The movie's sample tables are rebuilt for just that part and the bytes copied; it starts on the nearest keyframe (≤1s earlier). About 45 seconds of 1080p, ~12 of 4K.
+- Smaller · 720p: plays the part once into a 720p recording (takes as long as the part; keep the app open), up to 5 minutes.
+- Includes V2.14b (Spotify's new playlist endpoints) and V2.14c (videos from every picker, videos in Import with their own date and place).
