@@ -58,7 +58,7 @@ async function onChange(b) {
   const recent = t => typeof t === 'number' && now - t < 3600e3;   // don't replay old records when a phone syncs for the first time
   const ctx = makeCtx(await coll('users'), await coll('push'));
   if (c === 'pushtest' && op === 'INSERT') await send(ctx, r.userId, { title: 'Notifications are on ♡', body: 'This is how ' + name(ctx, (other(ctx, r.userId) || {}).id) + '’s bubbles will reach you.', url: '#home', tag: 'test' });
-  else if (c === 'bubbles' && op === 'INSERT' && recent(r.at)) { const to = other(ctx, r.userId); const body = r.photo ? (r.auto ? 'sent a photo 📷' : '📷 “' + r.text + '”') : r.sticker ? 'sent a sticker' : '“' + r.text + '”'; if (to) await send(ctx, to.id, { title: name(ctx, r.userId) + (r.kind === 'think' ? ' is thinking of you' : r.photo || r.sticker ? '' : ' says'), body, url: '#chat', tag: 'bubble' }, 'say'); }
+  else if (c === 'bubbles' && op === 'INSERT' && recent(r.at)) { const to = other(ctx, r.userId); const body = r.photo ? (r.video ? (r.auto ? 'sent a video 🎬' : '🎬 “' + r.text + '”') : r.auto ? 'sent a photo 📷' : '📷 “' + r.text + '”') : r.sticker ? 'sent a sticker' : '“' + r.text + '”'; if (to) await send(ctx, to.id, { title: name(ctx, r.userId) + (r.kind === 'think' ? ' is thinking of you' : r.photo || r.sticker ? '' : ' says'), body, url: '#chat', tag: 'bubble' }, 'say'); }
   // a pile of imported photos: one notification for the lot, not one per memory
   else if (c === 'imports' && op === 'INSERT' && recent(r.at)) { const to = other(ctx, r.by); const t = r.tripId ? await one(r.tripId) : null; if (to && !isSecretTrip(t)) await send(ctx, to.id, { title: name(ctx, r.by) + ' added ' + plural(r.count || 0, 'photo'), body: plural(r.memories || 0, 'new memory').replace('memorys', 'memories') + (t ? ' from ' + t.city : ''), url: t ? '#days/' + t.id : '#memories', tag: 'import-' + r.id }, 'memories'); }
   else if (c === 'moments' && op === 'INSERT' && recent(r.createdAt) && !r.fromPresent && !r.imported) {
@@ -122,9 +122,23 @@ async function tick(nowOverride) {
   return { sent: ctx.sent, logged: log.length };
 }
 
+// ---------- 3. a new version was published (Netlify "deploy succeeded" webhook) ----------
+// The site's version.json says which version it is and whether it's worth a notification (minor fixes say no).
+async function onRelease(body, siteOverride) {
+  const site = siteOverride || body.ssl_url || body.url || body.deploy_ssl_url; if (!site) return { skipped: 'no site' };
+  let v = null; try { const r = await fetch(site.replace(/\/$/, '') + '/version.json?t=' + Date.now()); if (r.ok) v = await r.json(); } catch (e) {}
+  if (!v || !v.version) return { skipped: 'no version.json' }; if (!v.notify) return { skipped: 'quiet release ' + v.version };
+  const id = 'pl_release_' + v.version; if (await one(id)) return { skipped: 'already announced ' + v.version };
+  const ctx = makeCtx(await coll('users'), await coll('push'));
+  for (const u of ctx.users) await send(ctx, u.id, { title: v.title || 'Des & Jett updated ♡', body: v.body || 'Tap to see what\'s new', url: '#whatsnew', tag: 'release' });
+  await upsert([{ id, collection: 'pushlog', data: { id, at: Date.now() }, updated_at: new Date().toISOString() }]); await del(ctx.gone);
+  return { sent: ctx.sent, version: v.version };
+}
+
 Deno.serve(async req => {
-  if (!SECRET || req.headers.get('x-notify-secret') !== SECRET) return new Response('not allowed', { status: 401 });
+  const u = new URL(req.url || 'http://local/'); const viaQuery = u.searchParams.get('secret');
+  if (!SECRET || (req.headers.get('x-notify-secret') !== SECRET && viaQuery !== SECRET)) return new Response('not allowed', { status: 401 });
   const body = await req.json().catch(() => ({}));
-  try { const out = body.type === 'tick' ? await tick(body.now) : await onChange(body); return new Response(JSON.stringify(out), { headers: { 'Content-Type': 'application/json' } }); }
+  try { const out = u.searchParams.get('release') ? await onRelease(body, u.searchParams.get('site')) : body.type === 'tick' ? await tick(body.now) : await onChange(body); return new Response(JSON.stringify(out), { headers: { 'Content-Type': 'application/json' } }); }
   catch (e) { console.error(e); return new Response(String(e && e.message || e), { status: 500 }); }
 });

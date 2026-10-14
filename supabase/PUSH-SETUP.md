@@ -37,3 +37,9 @@ for an import instead of nothing.
    end $$;
    ```
    (same project ref and secret you used the first time — it only replaces the function, nothing is deleted.)
+
+## Update notifications (V2.14)
+1. **Edge Functions → notify**: paste the new `functions/notify/index.ts` and **Deploy**.
+2. **Netlify → Site configuration → Notifications → Deploy notifications → Add notification → HTTP POST request**, event **Deploy succeeded**, URL:
+   `https://YOUR-PROJECT-REF.supabase.co/functions/v1/notify?release=1&secret=YOUR-NOTIFY-SECRET`
+3. For each release, edit `app/version.json`: bump `version`, set `notify` to `true` for a build (and write the `title`/`body`), or `false` for a quiet fix. Each version is announced once, even if you redeploy.

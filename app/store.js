@@ -129,6 +129,11 @@
       if (!blob) return null;
       const u = URL.createObjectURL(blob); urlCache.set(id, u); return u;
     },
+    // how much space photos, videos, voice notes and files take (the server's count when signed in)
+    async usage(){ const out = { photos: 0, videos: 0, voice: 0, files: 0, total: 0, count: 0, source: sb && sbUser ? 'server' : 'phone' };
+      const add = (name, size) => { if (/^pv_/.test(name)) return; const ext = (name.split('.').pop() || '').toLowerCase(); const k = /^(jpg|jpeg|png|heic|webp|gif)$/.test(ext) ? 'photos' : /^(mov|mp4|m4v)$/.test(ext) ? 'videos' : /^(m4a|webm|mp3|wav|aac|ogg)$/.test(ext) ? 'voice' : 'files'; out[k] += size || 0; out.total += size || 0; out.count++; };
+      if (sb && sbUser) { for (let off = 0; off < 50000; off += 1000) { const { data, error } = await sb.storage.from('assets').list('', { limit: 1000, offset: off }); if (error || !data) break; data.forEach(o => add(o.name, (o.metadata && o.metadata.size) || 0)); if (data.length < 1000) break; } return out; }
+      const db = await openIDB(); await new Promise(res => { const t = db.transaction('assets'); const q = t.objectStore('assets').openCursor(); q.onsuccess = () => { const c = q.result; if (!c) return res(); const v = c.value; add(String(c.key), v && v.buf ? v.buf.byteLength : v && v.size || 0); c.continue(); }; q.onerror = () => res(); }); return out; },
     // a local-only copy (small previews made on this phone for older photos); never uploaded
     async putLocalBlob(id, blob){ try { await putBlobLocal(id, blob); } catch (e) {} },
     async localBlob(id){ return getBlobLocal(id).catch(() => null); },

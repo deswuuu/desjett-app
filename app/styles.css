@@ -541,3 +541,31 @@ ul.cyl{margin:6px 0 0;padding-left:18px;font-size:13px;line-height:1.55;color:va
 .cmini{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;font-size:8.5px;text-align:center;color:var(--fg2)}
 .cmini i{font-style:normal;line-height:14px;border-radius:50%}
 .cmini i.per{background:#E0607E;color:#fff}.cmini i.pred{box-shadow:inset 0 0 0 1px #E0607E;color:#E0607E}.cmini i.ov{background:#7FB98F;color:#fff}.cmini i.td{font-weight:700;color:var(--fg)}
+/* V2.14: what's new fits every phone */
+.wnov{position:fixed;inset:0;z-index:15;display:flex;flex-direction:column;gap:12px;padding:calc(env(safe-area-inset-top,0px) + 14px) 20px calc(env(safe-area-inset-bottom,0px) + 18px);max-width:480px;margin:0 auto;background:var(--ground);overflow:hidden}
+.wnfig{flex:1 1 auto;min-height:90px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.wnfit{width:100%;transform-origin:center center}
+.wntext{flex:0 1 auto;max-height:46vh;overflow-y:auto}
+.wntext p{margin:8px 0 0;font-size:14px;line-height:1.5;font-weight:300;color:var(--fg2)}
+.wnov .row:last-child{flex:none}
+#app.swiping{box-shadow:-12px 0 30px rgba(0,0,0,.12);will-change:transform}
+/* V2.14: viewer — a strip the phone scrolls itself, with zoom */
+.vstrip{height:62vh;min-height:300px;display:flex;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none;background:#111}
+.vstrip::-webkit-scrollbar{display:none}
+.vslide{flex:0 0 100%;height:100%;scroll-snap-align:center;scroll-snap-stop:always;overflow:hidden;position:relative;touch-action:pan-x pan-y;display:flex;align-items:center;justify-content:center}
+.vslide.zoomed{touch-action:none}
+.vzoom{width:100%;height:100%;display:flex;align-items:center;justify-content:center;transform-origin:center center;will-change:transform}
+.vzoom img,.vzoom video{max-width:100%;max-height:100%;object-fit:contain;display:block;-webkit-user-select:none;user-select:none}
+.vzoom video{width:100%;background:#000}
+.sheet.viewer{transition:background .15s}
+.sheet.viewer.chromeless .vtop,.sheet.viewer.chromeless .vbody{opacity:0;pointer-events:none}
+.sheet.viewer.chromeless{background:#000}
+.sheet.viewer .vtop,.sheet.viewer .vbody{transition:opacity .2s}
+.vbadge{position:absolute;left:6px;bottom:6px;background:rgba(0,0,0,.5);color:#fff;font-size:10.5px;font-style:normal;font-weight:500;padding:2px 7px;border-radius:99px;pointer-events:none;z-index:1}
+.cph,.pola .ph,.clean .ph,.th,.mosaic button,.pgrid button,.wfeed button{position:relative}
+.th video{width:100%;height:100%;object-fit:cover;display:block}
+.sres{display:flex;flex-direction:column;gap:14px}
+.sres mark{background:#F6E39A;color:inherit;border-radius:3px;padding:0 1px}
+.srow{gap:10px;align-items:center}
+.msg.flash .b{animation:flash 1.6s}
+@keyframes flash{0%,40%{box-shadow:0 0 0 3px #F6E39A}100%{box-shadow:none}}

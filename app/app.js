@@ -139,13 +139,28 @@ function dateIn(user, d){ d = d || new Date(); try { return new Intl.DateTimeFor
 
 // ---------- shell ----------
 let route = { name:'home' }, sheet = null, toastT;
-function go(name, params){ route = Object.assign({ name }, params||{}); location.hash = '#' + name + (params && params.id ? '/' + params.id : ''); render(); window.scrollTo(0,0); }
+// Navigation remembers where you were: going back to a page (the ‹ button, a tab, or a swipe) lands where you'd scrolled to.
+const navStack = []; const routeKey = r => r.name + '/' + (r.id || '');
+function navTo(next){ const cur = routeKey(route), top = navStack[navStack.length - 1]; if (top && top.key === cur) top.y = window.scrollY; else navStack.push({ key: cur, y: window.scrollY });
+  const k = routeKey(next); const i = navStack.map(e => e.key).lastIndexOf(k); if (i >= 0) { const y = navStack[i].y; navStack.length = i + 1; return y; } navStack.push({ key: k, y: 0 }); return 0; }
+// (images arriving late can change the page height, so it re-checks a few times — unless you've started scrolling or gone elsewhere)
+let scrollTok = 0;
+function restoreScroll(y){ const tok = ++scrollTok; window.scrollTo(0, y); if (!y) return;
+  // only ever nudges further down, to a spot the page couldn't reach until its pictures loaded
+  const to = () => { if (tok === scrollTok && window.scrollY < y - 2) window.scrollTo(0, y); }; const stop = () => { if (tok === scrollTok) scrollTok++; }; window.addEventListener('touchmove', stop, { once: true, passive: true }); window.addEventListener('wheel', stop, { once: true, passive: true }); requestAnimationFrame(to); [120, 400, 900].forEach(ms => setTimeout(to, ms)); }
+function go(name, params){ const next = Object.assign({ name }, params||{}); const y = navTo(next); route = next; location.hash = '#' + name + (params && params.id ? '/' + params.id : ''); render(true); restoreScroll(y); }
+// "‹" on a page you can reach from several places goes back to wherever you came from (and your place there)
+const BACK_NAMES = { home: 'Home', trips: 'Trips', days: 'Days', calendar: 'Calendar', memories: 'Memories', search: 'Search', wall: 'Photos', photos: 'Photos', moments: 'Moments', songs: 'Our songs', map: 'Map', budget: 'Budget', cat: 'Budget', lists: 'Lists', list: 'List', chat: 'Chat', profile: 'Profile' };
+function backBtn(fallback, fallbackLabel){ const r = backRoute(); if (r && r.name !== route.name) { const t = r.name === 'trip' && r.id ? D.trip(r.id) : null; const label = t ? esc(t.city) : BACK_NAMES[r.name] || fallbackLabel; return `<button data-act="goBack|${fallback}">‹ ${label}</button>`; } return `<button data-go="${fallback}">‹ ${fallbackLabel}</button>`; }
+// the previous page, for the edge swipe
+function backRoute(){ const prev = navStack[navStack.length - 2]; if (!prev) return null; const [name, id] = prev.key.split('/'); return { name, id: id || undefined }; }
 function toast(msg){ let t = $('.toast'); if (t) t.remove(); t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); clearTimeout(toastT); toastT = setTimeout(() => t.remove(), 2200); }
 function openSheet(html, onMount, cls){ closeSheet(); const dim = document.createElement('div'); dim.className = 'dim'; dim.onclick = closeSheet; const sh = document.createElement('div'); sh.className = 'sheet' + (cls ? ' ' + cls : ''); sh.innerHTML = '<div class="grip"></div>' + html; document.body.append(dim, sh); sheet = { dim, sh }; bind(sh); if (onMount) onMount(sh); }
 function closeSheet(){ if (sheet) { sheet.dim.remove(); sheet.sh.remove(); sheet = null; } }
 // in-app confirm / prompt (browser popups are blocked in some places, and look wrong anyway)
 function ask(msg, opts){ opts = opts || {}; return new Promise(res => { const dim = document.createElement('div'); dim.className = 'dim ask'; const box = document.createElement('div'); box.className = 'askbox'; const input = opts.input != null; box.innerHTML = `<div style="font-size:15px;font-weight:500;letter-spacing:-.01em">${esc(msg)}</div>${opts.sub ? `<div class="sub" style="margin-top:4px">${esc(opts.sub)}</div>` : ''}${input ? `<input class="in" id="ask-in" style="margin-top:12px" value="${esc(opts.input||'')}" placeholder="${esc(opts.placeholder||'')}">` : ''}<div class="row" style="margin-top:14px;justify-content:flex-end;gap:8px"><button class="btn sm lite" id="ask-no">${esc(opts.no||'Cancel')}</button><button class="btn sm" id="ask-ok">${esc(opts.ok||'OK')}</button></div>`; document.body.append(dim, box); const done = v => { dim.remove(); box.remove(); res(v); }; dim.onclick = () => done(input ? null : false); box.querySelector('#ask-no').onclick = () => done(input ? null : false); box.querySelector('#ask-ok').onclick = () => done(input ? box.querySelector('#ask-in').value.trim() : true); if (input) { const el = box.querySelector('#ask-in'); el.focus(); el.select(); el.onkeydown = e => { if (e.key === 'Enter') done(el.value.trim()); }; } }); }
 const ACT = {};
+ACT.goBack = fallback => { const r = backRoute(); if (r) return go(r.name, r.id ? { id: r.id } : null); const [n, id] = fallback.split('/'); go(n, id ? { id } : null); };
 function bind(root){
   root.querySelectorAll('[data-go]').forEach(el => el.onclick = e => { e.preventDefault(); const [n, id] = el.dataset.go.split('/'); go(n, id ? { id } : null); });
   root.querySelectorAll('[data-act]').forEach(el => { const ev = el.dataset.on || 'click'; el['on' + ev] = e => { const [n, arg] = el.dataset.act.split('|'); if (!ACT[n]) return; if (ev === 'click' && el._busy) return; const r = ACT[n](arg, el, e); if (ev === 'click' && r && typeof r.then === 'function') { el._busy = true; el.classList.add('busy'); r.catch(err => { console.error(err); toast('Something went wrong: ' + (err && err.message || err)); }).finally(() => { el._busy = false; el.classList.remove('busy'); }); } }; });
@@ -156,7 +171,7 @@ function bind(root){
 }
 const imgQ = []; let imgActive = 0;
 function runImg(){ while (imgActive < 4 && imgQ.length) { const job = imgQ.shift(); if (!job.el.isConnected) continue; imgActive++; job.fn().catch(() => {}).finally(() => { imgActive--; runImg(); }); } }
-function setImg(el, u){ if (el.tagName === 'IMG') el.src = u; else el.style.backgroundImage = `url(${u})`; el.classList.add('loaded'); }
+function setImg(el, u){ if (el.tagName === 'IMG' || el.tagName === 'VIDEO') el.src = u; else el.style.backgroundImage = `url(${u})`; el.classList.add('loaded'); }
 const RETRY = [2000, 6000, 15000, 40000, 90000];
 function loadImg(el, get, tries, now){ const job = { el, fn: async () => { const u = await get().catch(() => null); if (u) setImg(el, u); else if ((tries || 0) < RETRY.length) setTimeout(() => { if (el.isConnected) loadImg(el, get, (tries || 0) + 1, now); }, RETRY[tries || 0]); } };
   if (now) { job.fn().catch(() => {}); return; } imgQ.push(job); runImg(); }
@@ -169,17 +184,24 @@ async function previewUrl(asset, thumb){ if (!asset) return null; if (pvCache.ha
     else { const full = await Store.blob(asset); if (!full) return null; try { const img = await decodeImage(full); const pv = await toJpeg(scaleTo(img, img.naturalWidth, img.naturalHeight, 480), .8); Store.putLocalBlob(k, pv); u = URL.createObjectURL(pv); } catch (e) { u = await Store.blobUrl(asset); } } }
   if (u) pvCache.set(asset, u); return u; }
 const pvAttr = p => `data-thumb="${p.asset}" data-pv="${p.thumb || ''}"`;
+// photos show the photo; videos show their still (and a ▶)
+const mediaAttr = (p, full) => p.video ? `data-asset="${p.thumb || ''}"` : full ? `data-asset="${p.asset}"` : pvAttr(p);
+const vbadge = p => p && p.video ? `<i class="vbadge">▶${p.dur ? ' ' + fmtDur(p.dur) : ''}</i>` : '';
 function palOf(id){ const u = D.user(id); return u ? `<i class="pal ${u.pal}" title="${esc(u.name)}"></i>` : ''; }
 function nav(on){ return `<nav class="nav">${[['home','Home'],['trips','Trips'],['calendar','Calendar'],['memories','Memories']].map(([k,l]) => `<button class="${on===k?'on':''}" data-go="${k}">${l}</button>`).join('')}</nav>`; }
 
-function render(){
+function render(nav){
   applySky();
   const app = $('#app'); const s = D.settings();
+  // re-drawing the same page keeps your place (images that haven't loaded yet would otherwise make it jump)
+  nav = nav === true; const y0 = window.scrollY; if (!nav) { app.style.minHeight = document.documentElement.scrollHeight + 'px'; clearTimeout(render.mh); render.mh = setTimeout(() => { app.style.minHeight = ''; }, 900); }
   if (!s.setup) return renderSetup(app);
   if (!D.me()) return renderWho(app);
-  const R = { notify: renderNotify, chat: renderChat, howto: renderHowto, gcal: renderGcal, cat: renderCategory, home: renderHome, trips: renderTrips, trip: renderTrip, days: renderDays, budget: renderBudget, photos: renderPhotos, day: renderDay, calendar: renderCalendar, profile: renderProfile, memories: renderMemories, between: renderBetween, emails: renderEmails, moments: renderMoments, lists: renderLists, list: renderList, wall: renderWall, money: renderMoney, cycle: renderCycle, songs: renderSongs, map: renderMap, import: renderImport };
+  const R = { notify: renderNotify, chat: renderChat, howto: renderHowto, gcal: renderGcal, cat: renderCategory, home: renderHome, trips: renderTrips, trip: renderTrip, days: renderDays, budget: renderBudget, photos: renderPhotos, day: renderDay, calendar: renderCalendar, profile: renderProfile, memories: renderMemories, between: renderBetween, emails: renderEmails, moments: renderMoments, lists: renderLists, list: renderList, wall: renderWall, search: renderSearch, money: renderMoney, cycle: renderCycle, songs: renderSongs, map: renderMap, import: renderImport };
+  R.whatsnew = a => { wnForce = true; renderWhatsNew(a); };
   (needsWhatsNew() ? renderWhatsNew : (R[route.name] || renderHome))(app);
   bind(app); bindHold(app); updateBadge();
+  if (!nav && Math.abs(window.scrollY - y0) > 2 && route.name !== 'chat') window.scrollTo(0, y0);
 }
 
 // ---------- setup ----------
@@ -507,7 +529,7 @@ function renderMoments(app){ const t = D.trip(route.id); const ms = D.tripMoment
 // ---------- day page ----------
 function polaroid(ph, m, draggable, scope){
   const idx = m.photos.indexOf(ph); const stickers = (ph.stickers||[]).map((s,i) => stkHTML(s, 'stk', `data-stk="${m.id},${idx},${i}" style="left:${s.x}px;top:${s.y}px;transform:rotate(${s.rot||0}deg)"`)).join('');
-  return `<div class="pola" data-pola="${m.id},${idx}" data-view="${scope || 'day:' + (m.tripId || 'none') + '_' + m.date},${m.id},${idx}" style="transform:rotate(${(idx%2?4:-4)}deg)"><div class="ph"><img data-asset="${ph.asset}" alt=""></div><span class="dt">${ph.caption ? esc(ph.caption) : palOf(m.authorId) + ' ' + m.date.replace(/-/g,' · ').slice(5) + ' · ' + m.date.slice(2,4)}</span>${stickers}</div>`;
+  return `<div class="pola" data-pola="${m.id},${idx}" data-view="${scope || 'day:' + (m.tripId || 'none') + '_' + m.date},${m.id},${idx}" style="transform:rotate(${(idx%2?4:-4)}deg)"><div class="ph"><img ${mediaAttr(ph, true)} alt="">${vbadge(ph)}</div><span class="dt">${ph.caption ? esc(ph.caption) : palOf(m.authorId) + ' ' + m.date.replace(/-/g,' · ').slice(5) + ' · ' + m.date.slice(2,4)}</span>${stickers}</div>`;
 }
 function renderDay(app){
   const [tripId, date] = route.id.split('_'); const t = tripId !== 'none' ? D.trip(tripId) : null;
@@ -519,9 +541,9 @@ function renderDay(app){
   const style = D.settings().photoStyle;
   const anni = D.isMonthiversary(date), months = anni ? D.monthsSince(date) : 0; const bds = D.birthdaysOn(date);
   const other23 = anni ? D.moments().filter(m => D.isMonthiversary(m.date) && m.date !== date && m.photos && m.photos.length).sort((a,b) => b.date.localeCompare(a.date)).slice(0,5) : [];
-  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="${t ? (t.occasion ? 'budget/' : 'days/') + t.id : 'calendar'}">‹ ${t ? esc(t.city) : 'Calendar'}</button><span>${fmtDow(date)}</span></div><h1 class="hd" style="font-size:34px">${bds.length && !plan ? bds.map(u => u.id === D.me().id ? 'Your birthday' : esc(u.name) + '\'s birthday').join(' & ') : anni ? `${months} month${months===1?'':'s'} <i class="heart lg"></i>` : plan ? esc(plan.title||plan.text) + (plan.who && plan.who !== 'both' ? ' ' + palOf(plan.who) : '') : fmtD(date)}</h1>${anni ? `<div class="sub" style="margin-top:-6px">since ${fmtD(D.anniversary())}${plan ? ' · ' + esc(plan.title||plan.text) : ''}</div>` : plan && plan.note ? `<div class="sub">${esc(plan.note)}</div>` : ''}
-    ${anni ? `<div class="l">Other ${ordinal(+date.slice(8))}s</div><div class="strip23" style="margin-top:-8px">${other23.map(m => `<button data-go="day/${m.tripId||'none'}_${m.date}"><div class="ph"><img data-asset="${m.photos[0].asset}" alt=""></div><span class="l">${MON[parseDate(m.date).getMonth()]} · ${D.monthsSince(m.date)}</span></button>`).join('')}${(() => { const nd = new Date(parseDate(date)); nd.setMonth(nd.getMonth()+1); const ni = isoDate(nd); return `<button data-go="day/none_${ni}"><div class="ph empty"></div><span class="l">${MON[nd.getMonth()]} · ${D.monthsSince(ni)}</span></button>`; })()}</div>` : ''}
-    ${more ? mosaicHTML(wall, photos, route.id) + seeAll + (() => { const f = stickerFocus && photos.find(x => x.p.asset === stickerFocus.asset); return f && style === 'polaroid' ? `<div class="l">Stickers on this one</div><div class="polas">${polaroid(f.p, f.m, true)}</div><div class="stkrow"><span class="l">Stickers · tap one, then the photo</span>${stickerTray('addSticker')}</div>` : ''; })() : photos.length ? style === 'polaroid' ? `<div class="polas">${wall.map(({p, m}) => polaroid(p, m, true)).join('')}</div>${more ? seeAll : ''}<div class="stkrow"><span class="l">Stickers · tap one, then a photo</span>${stickerTray('addSticker')}</div>` : `<div class="clean">${wall.map(({p, m}) => `<button class="ph" data-act="viewPh|day:${route.id},${m.id},${m.photos.indexOf(p)}"><img data-asset="${p.asset}" alt=""></button>`).join('')}</div>${more ? seeAll : ''}` : ''}
+  app.innerHTML = `<div class="screen"><div class="bar">${backBtn(t ? (t.occasion ? 'budget/' : 'days/') + t.id : 'calendar', t ? esc(t.city) : 'Calendar')}<span>${fmtDow(date)}</span></div><h1 class="hd" style="font-size:34px">${bds.length && !plan ? bds.map(u => u.id === D.me().id ? 'Your birthday' : esc(u.name) + '\'s birthday').join(' & ') : anni ? `${months} month${months===1?'':'s'} <i class="heart lg"></i>` : plan ? esc(plan.title||plan.text) + (plan.who && plan.who !== 'both' ? ' ' + palOf(plan.who) : '') : fmtD(date)}</h1>${anni ? `<div class="sub" style="margin-top:-6px">since ${fmtD(D.anniversary())}${plan ? ' · ' + esc(plan.title||plan.text) : ''}</div>` : plan && plan.note ? `<div class="sub">${esc(plan.note)}</div>` : ''}
+    ${anni ? `<div class="l">Other ${ordinal(+date.slice(8))}s</div><div class="strip23" style="margin-top:-8px">${other23.map(m => `<button data-go="day/${m.tripId||'none'}_${m.date}"><div class="ph"><img ${mediaAttr(m.photos[0])} alt=""></div><span class="l">${MON[parseDate(m.date).getMonth()]} · ${D.monthsSince(m.date)}</span></button>`).join('')}${(() => { const nd = new Date(parseDate(date)); nd.setMonth(nd.getMonth()+1); const ni = isoDate(nd); return `<button data-go="day/none_${ni}"><div class="ph empty"></div><span class="l">${MON[nd.getMonth()]} · ${D.monthsSince(ni)}</span></button>`; })()}</div>` : ''}
+    ${more ? mosaicHTML(wall, photos, route.id) + seeAll + (() => { const f = stickerFocus && photos.find(x => x.p.asset === stickerFocus.asset); return f && style === 'polaroid' ? `<div class="l">Stickers on this one</div><div class="polas">${polaroid(f.p, f.m, true)}</div><div class="stkrow"><span class="l">Stickers · tap one, then the photo</span>${stickerTray('addSticker')}</div>` : ''; })() : photos.length ? style === 'polaroid' ? `<div class="polas">${wall.map(({p, m}) => polaroid(p, m, true)).join('')}</div>${more ? seeAll : ''}<div class="stkrow"><span class="l">Stickers · tap one, then a photo</span>${stickerTray('addSticker')}</div>` : `<div class="clean">${wall.map(({p, m}) => `<button class="ph" data-act="viewPh|day:${route.id},${m.id},${m.photos.indexOf(p)}"><img ${mediaAttr(p, true)} alt="">${vbadge(p)}</button>`).join('')}</div>${more ? seeAll : ''}` : ''}
     ${ms.filter(m => m.kind !== 'plan').map(m => dayBlock(m, t, more)).join('')}
     ${!ms.length ? '<div class="empty">Nothing here yet.</div>' : ''}
     <div class="row mt-auto"><span class="l">${ms.filter(m=>m.kind!=='plan').length} moments${meals ? ' · ' + meals + ' meal' + (meals>1?'s':'') : ''}${cost ? ' · ' + money(cost) : ''}</span><span style="display:flex;gap:6px">${!plan ? `<button class="btn sm lite" data-act="addPlan|${date}${t?','+t.id:''}">+ Plan</button>` : `<button class="btn sm lite" data-act="editPlan|${plan.id}">Edit plan</button>`}<button class="btn sm lite" data-act="importStart|${t && !t.occasion ? t.id : ''}">Import</button><button class="btn sm" data-act="newMoment|${t ? t.id : ''},${date}">+ Add</button></span></div>
@@ -538,7 +560,7 @@ function voiceCard(v){ return `<div class="glass" style="padding:12px 14px"><div
 // a day with lots of photos: one big (featured first) and two beside it, the last with "+N"
 function mosaicHTML(wall, photos, dayId){ const byScore = wall.slice().sort((a, b) => (b.p.featured ? 1 : 0) - (a.p.featured ? 1 : 0)); const tile = (x, cls, inner) => `<button class="${cls}" data-act="viewPh|day:${dayId},${x.m.id},${x.m.photos.indexOf(x.p)}">${inner}</button>`;
   const [a, b, c] = byScore; const rest = photos.length - 3;
-  return `<div class="mosaic">${tile(a, 'mbig', `<img data-asset="${a.p.asset}" alt="">`)}${b ? tile(b, '', `<img ${pvAttr(b.p)} alt="">`) : ''}${c ? `<button class="more" data-go="wall/${dayId}"><img ${pvAttr(c.p)} alt="">${rest > 0 ? `<span>+${rest}</span>` : ''}</button>` : ''}</div>`; }
+  return `<div class="mosaic">${tile(a, 'mbig', `<img ${mediaAttr(a.p, true)} alt="">${vbadge(a.p)}`)}${b ? tile(b, '', `<img ${mediaAttr(b.p)} alt="">${vbadge(b.p)}`) : ''}${c ? `<button class="more" data-go="wall/${dayId}"><img ${pvAttr(c.p)} alt="">${rest > 0 ? `<span>+${rest}</span>` : ''}</button>` : ''}</div>`; }
 function pickWall(photos){ if (photos.length <= 4) return photos;
   const firsts = new Set(); const score = ({ p, m }, i) => { let s = 0; if (stickerFocus && stickerFocus.asset === p.asset) s += 10; if (p.featured) s += 5; if ((p.stickers||[]).length || p.caption) s += 1; if (!firsts.has(m.id)) { firsts.add(m.id); s += 0.5; } return s - i / 10000; };
   const scored = photos.map((x, i) => ({ x, i, s: score(x, i) })).sort((a, b) => b.s - a.s).slice(0, 3).sort((a, b) => a.i - b.i); return scored.map(o => o.x); }
@@ -570,8 +592,8 @@ function renderWall(app){
   const ms = D.moments().filter(m => m.date === date && (t ? m.tripId === t.id : !m.tripId) && (m.photos||[]).length).sort((a,b) => a.createdAt - b.createdAt); const n = ms.reduce((s, m) => s + m.photos.length, 0); const scope = 'day:' + route.id;
   const label = m => `<div class="l wlabel">${palOf(m.authorId)} ${esc(m.text || m.title || 'Moment')}${m.time ? ' · ' + hhmm(m.time) : ''}${m.place && m.place.name ? ' · 📍 ' + esc(m.place.name) : ''}</div>`;
   const body = wallMode === 'grid'
-    ? ms.map(m => label(m) + `<div class="pgrid" style="margin-top:-8px">${m.photos.map((p, i) => `<button data-act="viewPh|${scope},${m.id},${i}"><img ${pvAttr(p)} alt="">${p.featured ? '<i class="fstar">★</i>' : ''}</button>`).join('')}</div>`).join('')
-    : ms.map(m => label(m) + m.photos.map((p, i) => `<div class="wfeed"><button data-act="viewPh|${scope},${m.id},${i}"><img data-asset="${p.asset}" alt="">${p.featured ? '<i class="fstar">★</i>' : ''}</button><input class="in vcap" placeholder="Add a caption" value="${esc(p.caption || '')}" data-act="wallCap|${m.id},${i}" data-on="change">${p.taken ? `<div class="l">${hhmm(p.taken)}</div>` : ''}</div>`).join('')).join('');
+    ? ms.map(m => label(m) + `<div class="pgrid" style="margin-top:-8px">${m.photos.map((p, i) => `<button data-act="viewPh|${scope},${m.id},${i}"><img ${pvAttr(p)} alt="">${vbadge(p)}${p.featured ? '<i class="fstar">★</i>' : ''}</button>`).join('')}</div>`).join('')
+    : ms.map(m => label(m) + m.photos.map((p, i) => `<div class="wfeed"><button data-act="viewPh|${scope},${m.id},${i}"><img ${mediaAttr(p, true)} alt="">${vbadge(p)}${p.featured ? '<i class="fstar">★</i>' : ''}</button><input class="in vcap" placeholder="Add a caption" value="${esc(p.caption || '')}" data-act="wallCap|${m.id},${i}" data-on="change">${p.taken ? `<div class="l">${hhmm(p.taken)}</div>` : ''}</div>`).join('')).join('');
   app.innerHTML = `<div class="screen"><div class="bar"><button data-go="day/${route.id}">‹ ${fmtDow(date)} ${MON[parseDate(date).getMonth()]}</button><span>${n} photo${n === 1 ? '' : 's'}</span></div><h1 class="hd">Photos</h1>
     <div class="seg"><button class="${wallMode === 'grid' ? 'on' : ''}" data-act="wallMode|grid">▦ Grid</button><button class="${wallMode === 'scroll' ? 'on' : ''}" data-act="wallMode|scroll">☰ Scroll</button></div>
     ${body || '<div class="empty">No photos on this day.</div>'}</div>${nav(t ? 'trips' : 'calendar')}`;
@@ -588,37 +610,71 @@ function viewerList(scope){ const [kind, key] = [scope.slice(0, scope.indexOf(':
   ms = ms.slice().sort((a,b) => (a.date + String(a.createdAt||0).padStart(15,'0')).localeCompare(b.date + String(b.createdAt||0).padStart(15,'0')));
   return ms.flatMap(m => (m.photos||[]).map((p, idx) => ({ mid: m.id, idx }))); }
 ACT.viewPh = arg => { const parts = arg.split(','); const idx = +parts.pop(), mid = parts.pop(), scope = parts.join(','); const list = viewerList(scope); const i = Math.max(0, list.findIndex(x => x.mid === mid && x.idx === idx)); viewer = { list: list.length ? list : [{ mid, idx }], i }; drawViewer(); };
+// The viewer: one strip of photos the phone scrolls itself (smooth, snaps like Photos); pinch or double-tap to zoom;
+// tap hides the buttons; swipe down closes. Captions and comments below follow the photo you're on.
+const vItem = x => { const m = x && Store.get('moments', x.mid); return m && m.photos[x.idx] ? { m, p: m.photos[x.idx] } : null; };
+const vSig = () => viewer.list.map(x => { const it = vItem(x); return it ? it.p.asset : '-'; }).join(',');
 function drawViewer(keepText){
-  if (!viewer) return; const cur = viewer.list[viewer.i]; const m = cur && Store.get('moments', cur.mid); const p = m && m.photos[cur.idx];
-  if (!p) { viewer = null; closeSheet(); return render(); }
-  const me = D.me(); const t = m.tripId ? D.trip(m.tripId) : null; const cs = D.comments(m.id, p.asset); const typed = keepText ? ($('#v-cm') || {}).value || '' : ''; const capTyped = keepText && document.activeElement && document.activeElement.id === 'v-cap' ? document.activeElement.value : null; const focusId = keepText && document.activeElement ? document.activeElement.id : '';
-  openSheet(`<div class="vtop"><button data-act="vClose">‹ ${esc(m.text ? m.text.slice(0, 28) : fmtD(m.date))}</button><span>${viewer.list.length > 1 ? (viewer.i + 1) + ' of ' + viewer.list.length : ''}</span></div>
-    <div class="vimg ${p.polaroid ? 'pol' : ''}" id="v-img"><img data-asset="${p.asset}" alt=""></div>
-    ${viewer.list.length > 1 ? `<div class="vdots">${viewer.list.map((_, j) => `<i class="${j === viewer.i ? 'on' : ''}"></i>`).join('')}</div>` : ''}
-    <div class="vbody">
-      <input class="in vcap" id="v-cap" placeholder="Add a caption" value="${esc(capTyped != null ? capTyped : (p.caption||''))}" data-act="vCap" data-on="change">
-      <div class="l">${palOf(m.authorId)} ${esc((D.user(m.authorId)||{}).name||'')} · ${fmtDow(m.date)} ${MON[parseDate(m.date).getMonth()]}${t ? ' · ' + esc(t.city) : ''}</div>
+  if (!viewer) return; const it = vItem(viewer.list[viewer.i]); if (!it) { viewer = null; closeSheet(); return render(); }
+  const strip = sheet && sheet.sh.querySelector('.vstrip');
+  if (strip && viewer.sig === vSig()) return viewerBody(keepText);
+  viewer.sig = vSig();
+  openSheet(`<div class="vtop"><button data-act="vClose">‹ <span id="v-title"></span></button><span id="v-count"></span></div>
+    <div class="vstrip" id="v-img">${viewer.list.map((x, j) => { const v = vItem(x); return `<div class="vslide" data-j="${j}"><div class="vzoom">${v && v.p.video ? `<video playsinline controls preload="none" data-src="${v.p.asset}" data-poster="${v.p.thumb || ''}"></video>` : `<img alt="" data-src="${v ? v.p.asset : ''}" data-pv="${v ? v.p.thumb || '' : ''}">`}</div></div>`; }).join('')}</div>
+    <div class="vbody" id="v-body"></div>`, sh => {
+      const st = sh.querySelector('.vstrip'); st.scrollLeft = viewer.i * st.clientWidth; let tm = null;
+      st.addEventListener('scroll', () => { clearTimeout(tm); tm = setTimeout(() => { const j = Math.round(st.scrollLeft / Math.max(1, st.clientWidth)); if (viewer && j !== viewer.i && j >= 0 && j < viewer.list.length) { viewer.i = j; resetZoomAll(sh); viewerBody(false); } }, 90); }, { passive: true });
+      sh.querySelectorAll('.vslide').forEach(sl => attachZoom(sl, st));
+      viewerBody(keepText);
+    }, 'viewer');
+}
+// load the photo you're on and the ones either side (preview first, then the full photo)
+function viewerLoad(sh){ const near = [viewer.i, viewer.i + 1, viewer.i - 1, viewer.i + 2];
+  near.forEach(j => { const sl = sh.querySelector(`.vslide[data-j="${j}"]`); if (!sl) return; const el = sl.querySelector('img,video'); if (!el || el.dataset.loaded) return; el.dataset.loaded = 1;
+    if (el.tagName === 'VIDEO') { if (el.dataset.poster) Store.blobUrl(el.dataset.poster).then(u => { if (u) el.poster = u; }); loadImg(el, () => Store.blobUrl(el.dataset.src), 0, true); return; }
+    if (el.dataset.pv) previewUrl(el.dataset.src, el.dataset.pv).then(u => { if (u && !el.dataset.full) el.src = u; });
+    loadImg(el, async () => { const u = await Store.blobUrl(el.dataset.src); if (u) el.dataset.full = 1; return u; }, 0, true); }); }
+function viewerBody(keepText){
+  if (!viewer || !sheet) return; const sh = sheet.sh; const it = vItem(viewer.list[viewer.i]); if (!it) return; const { m, p } = it;
+  const me = D.me(); const t = m.tripId ? D.trip(m.tripId) : null; const cs = D.comments(m.id, p.asset);
+  const typed = keepText ? ($('#v-cm') || {}).value || '' : ''; const capTyped = keepText && document.activeElement && document.activeElement.id === 'v-cap' ? document.activeElement.value : null; const focusId = keepText && document.activeElement ? document.activeElement.id : '';
+  const tt = sh.querySelector('#v-title'); if (tt) tt.textContent = m.text ? m.text.slice(0, 28) : fmtD(m.date); const cnt = sh.querySelector('#v-count'); if (cnt) cnt.textContent = viewer.list.length > 1 ? (viewer.i + 1) + ' of ' + viewer.list.length : '';
+  const body = sh.querySelector('#v-body');
+  body.innerHTML = `<input class="in vcap" id="v-cap" placeholder="Add a caption" value="${esc(capTyped != null ? capTyped : (p.caption||''))}" data-act="vCap" data-on="change">
+      <div class="l">${palOf(m.authorId)} ${esc((D.user(m.authorId)||{}).name||'')} · ${fmtDow(m.date)} ${MON[parseDate(m.date).getMonth()]}${p.taken ? ' · ' + hhmm(p.taken) : ''}${t ? ' · ' + esc(t.city) : ''}</div>
       <div class="cms">${cs.map(c => { const u = D.user(c.by) || {}; const mine = c.by === me.id; return `<div class="cm ${mine ? 'me' : ''}"><i class="pal ${u.pal||'bunny'}"></i><div><button class="bb" ${mine ? `data-act="vDelCm|${c.id}"` : ''}>${esc(c.text)}</button><div class="t">${esc(u.name||'')} · ${timeIn(me, new Date(c.at))}${isoDate(new Date(c.at)) !== today() ? ' · ' + fmtD(isoDate(new Date(c.at))) : ''}</div></div></div>`; }).join('')}</div>
       <div class="row" style="gap:8px;margin-top:auto"><input class="in" id="v-cm" placeholder="Add a comment" value="${esc(typed)}" style="font-size:16px"><button class="btn sm" data-act="vSend">Send</button></div>
-      <div class="vact"><button data-act="vFeature">${p.featured ? '★ Featured' : '☆ Feature'}</button><button data-act="vFlip">⇋ Flip</button><button data-act="vStickers">Stickers</button><button data-act="shareAsset|${p.asset}">Save</button><button data-act="vDelete">Delete</button></div>
-    </div>`, sh => {
-      const img = sh.querySelector('#v-img'); let x0 = null;
-      img.addEventListener('touchstart', e => { x0 = e.touches[0].clientX; }, { passive: true });
-      img.addEventListener('touchend', e => { if (x0 == null) return; const dx = e.changedTouches[0].clientX - x0; x0 = null; if (Math.abs(dx) > 40) ACT.vGo(dx < 0 ? 1 : -1); });
-      img.addEventListener('click', e => { const r = img.getBoundingClientRect(); ACT.vGo(e.clientX > r.left + r.width / 2 ? 1 : -1); });
-      if (focusId) { const f = sh.querySelector('#' + focusId); if (f) f.focus(); }
-    }, 'viewer');
-  prefetch(p.asset); const nx = viewer.list[(viewer.i + 1) % viewer.list.length]; const nm = nx && Store.get('moments', nx.mid); if (nm && nm.photos[nx.idx]) prefetch(nm.photos[nx.idx].asset);
+      <div class="vact"><button data-act="vFeature">${p.featured ? '★ Featured' : '☆ Feature'}</button>${p.video ? '' : '<button data-act="vFlip">⇋ Flip</button><button data-act="vStickers">Stickers</button>'}<button data-act="shareAsset|${p.asset}">Save</button><button data-act="vDelete">Delete</button></div>`;
+  bind(body); viewerLoad(sh);
+  if (focusId) { const f = sh.querySelector('#' + focusId); if (f) f.focus(); }
+  prefetch(p.asset); const nx = vItem(viewer.list[(viewer.i + 1) % viewer.list.length]); if (nx && !nx.p.video) prefetch(nx.p.asset);
+  sh.querySelectorAll('video').forEach((v, j) => { if (+v.closest('.vslide').dataset.j !== viewer.i && !v.paused) v.pause(); });
 }
+// pinch / double-tap zoom and drag while zoomed; a single tap shows or hides the buttons; swipe down closes
+function attachZoom(slide, strip){ const box = slide.querySelector('.vzoom'); let s = 1, x = 0, y = 0, pinch = null, pan = null, lastTap = 0, tapT = null, down = null;
+  const apply = (anim) => { box.style.transition = anim ? 'transform .2s ease-out' : ''; box.style.transform = s > 1.001 ? `translate(${x}px,${y}px) scale(${s})` : ''; slide.classList.toggle('zoomed', s > 1.001); if (strip) strip.style.overflowX = s > 1.001 ? 'hidden' : ''; };
+  const clamp = () => { const w = slide.clientWidth, h = slide.clientHeight; const mx = (w * (s - 1)) / 2, my = (h * (s - 1)) / 2; x = Math.max(-mx, Math.min(mx, x)); y = Math.max(-my, Math.min(my, y)); };
+  slide._reset = () => { s = 1; x = 0; y = 0; apply(); };
+  const zoomAt = (cx, cy, to) => { const r = slide.getBoundingClientRect(); const ox = cx - r.left - r.width / 2, oy = cy - r.top - r.height / 2; const k = to / s; x = (x - ox) * k + ox; y = (y - oy) * k + oy; s = to; if (s <= 1.001) { s = 1; x = 0; y = 0; } clamp(); apply(true); };
+  slide.addEventListener('touchstart', e => { if (e.target.tagName === 'VIDEO') return; if (e.touches.length === 2) { const [a, b] = e.touches; pinch = { d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), s, x, y, cx: (a.clientX + b.clientX) / 2, cy: (a.clientY + b.clientY) / 2 }; pan = null; down = null; }
+    else if (e.touches.length === 1) { const t0 = e.touches[0]; if (s > 1) pan = { x: t0.clientX, y: t0.clientY, ox: x, oy: y }; else down = { x: t0.clientX, y: t0.clientY, dy: 0, v: false }; } }, { passive: true });
+  slide.addEventListener('touchmove', e => { if (pinch && e.touches.length === 2) { e.preventDefault(); const [a, b] = e.touches; const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); const ns = Math.max(1, Math.min(5, pinch.s * d / pinch.d)); const r = slide.getBoundingClientRect(); const ox = pinch.cx - r.left - r.width / 2, oy = pinch.cy - r.top - r.height / 2; s = ns; x = (pinch.x - ox) * (ns / pinch.s) + ox + ((a.clientX + b.clientX) / 2 - pinch.cx); y = (pinch.y - oy) * (ns / pinch.s) + oy + ((a.clientY + b.clientY) / 2 - pinch.cy); clamp(); apply(); return; }
+    if (pan && e.touches.length === 1) { e.preventDefault(); x = pan.ox + e.touches[0].clientX - pan.x; y = pan.oy + e.touches[0].clientY - pan.y; clamp(); apply(); return; }
+    if (down && e.touches.length === 1) { const dx = e.touches[0].clientX - down.x, dy = e.touches[0].clientY - down.y; if (!down.v && Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx) * 1.4 && dy > 0) down.v = true; if (down.v) { e.preventDefault(); down.dy = dy; box.style.transform = `translateY(${dy}px) scale(${Math.max(.8, 1 - dy / 1200)})`; if (sheet) sheet.sh.style.background = `rgba(0,0,0,${Math.max(0, .9 - dy / 400)})`; } } }, { passive: false });
+  slide.addEventListener('touchend', e => { if (pinch && e.touches.length < 2) { pinch = null; if (s < 1.05) { s = 1; x = 0; y = 0; } apply(true); return; } pan = null;
+    if (down) { const d = down; down = null; if (d.v) { if (d.dy > 110) return ACT.vClose(); box.style.transition = 'transform .2s ease-out'; box.style.transform = ''; if (sheet) sheet.sh.style.background = ''; return; } } }, { passive: true });
+  // taps: one = show/hide buttons, two quick ones = zoom in/out where you tapped
+  slide.addEventListener('click', e => { if (e.target.tagName === 'VIDEO') return; const now = Date.now(); if (now - lastTap < 300) { clearTimeout(tapT); lastTap = 0; zoomAt(e.clientX, e.clientY, s > 1 ? 1 : 2.5); return; } lastTap = now; tapT = setTimeout(() => { if (sheet) sheet.sh.classList.toggle('chromeless'); }, 300); }); }
+function resetZoomAll(sh){ sh.querySelectorAll('.vslide').forEach(sl => sl._reset && sl._reset()); }
 // keep the photo itself ready, so Save shares straight away (iPhone blocks sharing if a tap waited on a download)
 const ready = new Map(); function prefetch(id){ if (id && !ready.has(id)) Store.blob(id).then(b => { if (b) ready.set(id, b); }).catch(() => {}); }
 ACT.vFlip = async () => { const cur = viewer.list[viewer.i]; const m = Store.get('moments', cur.mid); const p = m.photos[cur.idx]; const b = ready.get(p.asset) || await Store.blob(p.asset); if (!b) return toast('Photo isn\'t on this phone yet');
   toast('Flipping…'); const ph = await storePhoto(b, true); const old = [p.asset, p.thumb].filter(Boolean); const cms = Store.all('comments').filter(c => c.asset === p.asset);
   Object.assign(p, ph); if (!ph.thumb) delete p.thumb; await Store.put('moments', m); if (cms.length) await Store.putMany('comments', cms.map(c => Object.assign(c, { asset: ph.asset }))); old.forEach(a => Store.removeBlob(a)); pvCache.delete(old[0]); drawViewer(true); toast('Flipped'); };
-ACT.vGo = d => { if (!viewer) return; const n = viewer.list.length; if (n < 2) return; viewer.i = (viewer.i + d + n) % n; drawViewer(); };
+ACT.vGo = d => { if (!viewer) return; const n = viewer.list.length; if (n < 2) return; viewer.i = (viewer.i + d + n) % n; const st = sheet && sheet.sh.querySelector('.vstrip'); if (st) { st.scrollLeft = viewer.i * st.clientWidth; resetZoomAll(sheet.sh); viewerBody(false); } else drawViewer(); };
 ACT.vClose = () => { viewer = null; closeSheet(); render(); };
 ACT.vCap = async (a, el) => { const cur = viewer.list[viewer.i]; const m = Store.get('moments', cur.mid); m.photos[cur.idx].caption = el.value.trim(); await Store.put('moments', m); };
-ACT.vSend = async () => { const el = $('#v-cm'); const text = el.value.trim(); if (!text) return; const cur = viewer.list[viewer.i]; const m = Store.get('moments', cur.mid); await Store.put('comments', { id: Store.uid(), mid: m.id, asset: m.photos[cur.idx].asset, by: D.me().id, text, at: Date.now() }); el.value = ''; drawViewer(); };
+ACT.vSend = async () => { const el = $('#v-cm'); const text = el.value.trim(); if (!text) return; const cur = viewer.list[viewer.i]; const m = Store.get('moments', cur.mid); el.value = ''; await Store.put('comments', { id: Store.uid(), mid: m.id, asset: m.photos[cur.idx].asset, by: D.me().id, text, at: Date.now() }); drawViewer(); };
 ACT.vDelCm = async id => { if (!await ask('Delete this comment?', { ok: 'Delete' })) return; await Store.remove(id); drawViewer(true); };
 ACT.vFeature = async () => { const cur = viewer.list[viewer.i]; const m = Store.get('moments', cur.mid); const p = m.photos[cur.idx]; p.featured = !p.featured; await Store.put('moments', m); toast(p.featured ? 'Shows on the day\'s wall' : 'Not featured'); drawViewer(true); };
 ACT.vStickers = () => { const cur = viewer.list[viewer.i]; const m = Store.get('moments', cur.mid); stickerFocus = { asset: (m.photos[cur.idx] || {}).asset }; viewer = null; closeSheet(); go('day', { id: (m.tripId || 'none') + '_' + m.date }); toast('Tap a sticker, then the photo'); };
@@ -677,7 +733,7 @@ function momentSheet(m, editing, opts){
   const x = (act) => `<button class="x" data-act="${act}" aria-label="Remove">✕</button>`;
   const who = present ? D.user(present.forUser) : null;
   const drawMain = () => { const t = theTrip(); const list = mode === 'occ' ? D.occasions() : D.trips();
-    const thumbs = m.photos.map((p, i) => `<div class="th ${p.polaroid ? 'pol' : ''}"><img data-asset="${p.asset}" alt="">${x('mRmPhoto|e,' + i)}</div>`).join('') + pendingPhotos.map((p, i) => `<div class="th ${p.polaroid ? 'pol' : ''}"><img src="${p.url}" alt="">${x('mRmPhoto|p,' + i)}</div>`).join('');
+    const thumbs = m.photos.map((p, i) => `<div class="th ${p.polaroid ? 'pol' : ''}"><img ${mediaAttr(p)} alt="">${vbadge(p)}${x('mRmPhoto|e,' + i)}</div>`).join('') + pendingPhotos.map((p, i) => `<div class="th ${p.polaroid ? 'pol' : ''}">${p.video ? `<video src="${p.url}#t=0.3" muted playsinline preload="metadata"></video><i class="vbadge">▶</i>` : `<img src="${p.url}" alt="">`}${x('mRmPhoto|p,' + i)}</div>`).join('');
     const voices = m.items.filter(it => it.type === 'voice').map(v => `<div class="it"><button class="play" data-act="play|${v.asset}"></button>${palOf(v.by || m.authorId)}${v.name ? `<span class="aname">${esc(v.name)}</span>` : `<span class="bars">${BARS}</span>`}<span class="l">${fmtDur(v.dur)}</span>${x('mRmItem|' + v.id)}</div>`).join('');
     const videos = m.items.filter(it => it.type === 'video').map(v => `<div class="it"><button class="songbtn" data-act="mEditVideo|${v.id}"><b>▶ ${esc(v.title || 'A video')}</b><div class="l">${esc((v.url||'').replace(/^https?:\/\/(www\.)?/,'').slice(0,34))}</div></button>${x('mRmItem|' + v.id)}</div>`).join('');
     const songs = m.items.filter(it => it.type === 'song').map(sg => `<div class="it"><button class="songbtn" data-act="mEditSong|${sg.id}"><b>${esc(sg.title || 'A song')}</b><div class="l">${esc(sg.artist || (sg.url||'').replace(/^https?:\/\//,'').slice(0,34))}</div></button>${x('mRmItem|' + sg.id)}</div>`).join('');
@@ -692,7 +748,7 @@ function momentSheet(m, editing, opts){
     <div class="items">${thumbs ? `<div class="thumbs">${thumbs}</div>` : ''}${voices}${songs}${videos}${costRows}</div>
     ${present ? `<div class="list" style="font-size:13.5px"><div class="row"><span>Opens</span><span class="l">${fmtD(m.date)} · 12:00am ${esc(who.name)}'s time</span></div><div class="row"><span>Hidden from ${esc(who.name)}</span><span class="l">until then</span></div></div>` : ''}
     <div class="row" style="margin-top:auto">${present ? `<span class="l">Only you can see this</span>` : `<span style="display:flex;gap:8px;align-items:center"><input class="in" type="date" id="m-date" value="${m.date}" style="padding:8px 10px;font-size:12px;width:auto"></span>`}<span style="display:flex;gap:6px">${editing ? `<button class="btn sm lite" data-act="mDelete">Delete</button>` : ''}<button class="btn sm" data-act="mSave">${present ? (editing ? 'Save' : 'Wrap it') : 'Save'}</button></span></div>
-    <input type="file" id="m-file" accept="image/*" multiple hidden data-act="mFiles" data-on="change"><input type="file" id="m-audio" accept="audio/*,.m4a,.mp3,.wav,.aac" multiple hidden data-act="mAudioFiles" data-on="change">`; };
+    <input type="file" id="m-file" accept="${photoKind === 'polaroid' ? 'image/*' : 'image/*,video/*'}" multiple hidden data-act="mFiles" data-on="change"><input type="file" id="m-audio" accept="audio/*,.m4a,.mp3,.wav,.aac" multiple hidden data-act="mAudioFiles" data-on="change">`; };
   const drawCost = () => { const c = costEdit; const t = theTrip(); const cats = D.cats(t); const tag = c.tag || 'food';
     return `<div class="bar"><button data-act="cBack">Back</button><span>Cost</span></div>
     <input class="in big" id="c-label" placeholder="What was it?" value="${esc(c.label||'')}">
@@ -712,8 +768,8 @@ function momentSheet(m, editing, opts){
   ACT.mNewTrip = async () => { keep(); const city = await ask('Which city?', { input: '', ok: 'Add trip' }); if (!city) return; const t = await Store.put('trips', { id: Store.uid(), city, start: m.date, end: addDays(m.date, 4), flyer: '', createdAt: Date.now() }); m.tripId = t.id; ddOpen = false; redraw(); };
   ACT.mNewOcc = async () => { keep(); const name = await ask('Name the occasion', { input: '', placeholder: 'One year, Christmas…', ok: 'Add' }); if (!name) return; const o = await Store.put('trips', { id: Store.uid(), occasion: true, kind: 'custom', city: name, start: m.date, end: m.date, authorId: me.id, secret: false, createdAt: Date.now() }); m.tripId = o.id; ddOpen = false; redraw(); };
   let photoKind = 'photo';
-  ACT.mPhoto = kind => { keep(); photoKind = kind; $('#m-file').click(); };
-  ACT.mFiles = (a, f) => { Array.from(f.files).forEach(file => pendingPhotos.push({ file, polaroid: photoKind === 'polaroid', url: URL.createObjectURL(file) })); redraw(); };
+  ACT.mPhoto = kind => { keep(); photoKind = kind; const f = $('#m-file'); f.accept = kind === 'polaroid' ? 'image/*' : 'image/*,video/*'; f.click(); };
+  ACT.mFiles = (a, f) => { const big = []; Array.from(f.files).forEach(file => { if (tooBig(file)) return big.push(file); pendingPhotos.push({ file, polaroid: photoKind === 'polaroid' && !isVideo(file), video: isVideo(file), url: URL.createObjectURL(file) }); }); if (big.length) toast(big.length === 1 ? `That video is ${Math.round(big[0].size / 1048576)} MB — the limit is 50 MB. Try a shorter clip.` : big.length + ' videos are over the 50 MB limit'); redraw(); };
   ACT.mRmPhoto = async arg => { keep(); const [k, i] = arg.split(','); if (k === 'p') { pendingPhotos.splice(+i, 1); return redraw(); } if (!await confirmRm('photo')) return; const [p] = m.photos.splice(+i, 1); if (p) { removedAssets.push(p.asset); if (p.thumb) removedAssets.push(p.thumb); } redraw(); };
   ACT.mRmItem = async id => { keep(); const it = m.items.find(x => x.id === id); if (!it) return; if (!await confirmRm(it.type === 'voice' ? 'voice note' : it.type)) return; m.items = m.items.filter(x => x.id !== id); if (it.type === 'voice' && it.asset) removedAssets.push(it.asset); redraw(); };
   const songAsk = async sg => { const url = await ask('Paste a Spotify link', { input: sg.url || '', placeholder: 'https://open.spotify.com/track/…', ok: 'Next' }); if (url == null || !url) return null; sg.url = url; sg.title = (await ask('Song title', { sub: 'optional', input: sg.title || '', ok: 'Next' })) || ''; sg.artist = (await ask('Artist', { sub: 'optional', input: sg.artist || '', ok: 'Done' })) || ''; return sg; };
@@ -763,7 +819,7 @@ function momentSheet(m, editing, opts){
     if (rec) { const p = recDone; rec.stop(); await p; } if (voiceSaving) await voiceSaving; keep();
     m.items = m.items.filter(it => it.type !== 'cost' || +it.amount || it.label);
     if (!m.text && !pendingPhotos.length && !m.photos.length && !m.items.length) return toast('Add something first');
-    for (const p of pendingPhotos) { m.photos.push(Object.assign(await storePhoto(p.file), { polaroid: p.polaroid, stickers: [] })); }
+    for (const p of pendingPhotos) { if (p.video) { try { m.photos.push(Object.assign(await storeVideo(p.file), { stickers: [] })); } catch (e) { toast('A video was too big to add'); } } else m.photos.push(Object.assign(await storePhoto(p.file), { polaroid: p.polaroid, stickers: [] })); }
     m.id = m.id || Store.uid(); m.createdAt = m.createdAt || Date.now();
     if (present) { Object.assign(m, { forUser: present.forUser, fromUser: me.id, authorId: me.id }); await Store.put('presents', m); }
     else { m.kind = m.kind || 'moment'; if (mode === 'none') m.tripId = ''; else if (!m.tripId) { const f = mode === 'occ' ? D.occasionForDate(m.date) : D.tripForDate(m.date); m.tripId = f ? f.id : ''; } await Store.put('moments', m); }
@@ -792,6 +848,17 @@ function scaleTo(src, w0, h0, max, mirror){ let w = w0, h = h0, cur = src; const
   const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d'); x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high'; if (mirror) { x.translate(W, 0); x.scale(-1, 1); } x.drawImage(cur, 0, 0, W, H); return c; }
 const toJpeg = (c, q) => new Promise(r => c.toBlob(r, 'image/jpeg', q));
 async function shrink(file, max, mirror){ try { const img = await decodeImage(file); const c = scaleTo(img, img.naturalWidth, img.naturalHeight, max || 2048, mirror); return await toJpeg(c, .9); } catch (e) { return file; } }
+// a video is kept as it is (up to 50 MB — the free Supabase plan's limit per file), with a still for grids and the viewer
+const VIDEO_MAX = 50 * 1024 * 1024;
+async function videoStill(file){ return new Promise(res => { const v = document.createElement('video'); const u = URL.createObjectURL(file); let done = false; const finish = r => { if (done) return; done = true; URL.revokeObjectURL(u); res(r); };
+  v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = u; setTimeout(() => finish(null), 8000);
+  v.onloadeddata = () => { try { v.currentTime = Math.min(0.5, (v.duration || 1) / 3); } catch (e) { finish(null); } };
+  v.onseeked = async () => { try { const c = scaleTo(v, v.videoWidth, v.videoHeight, 720); finish({ still: await toJpeg(c, .82), dur: v.duration || 0 }); } catch (e) { finish(null); } };
+  v.onerror = () => finish(null); }); }
+async function storeVideo(file){ if (file.size > VIDEO_MAX) throw new Error('too big'); const s = await videoStill(file); const ext = ((file.name.split('.').pop() || '').toLowerCase().slice(0, 4)) || (file.type.includes('quicktime') ? 'mov' : 'mp4');
+  const thumb = s && s.still ? await Store.putBlob(s.still, 'jpg') : ''; const asset = await Store.putBlob(file, ext); return { asset, thumb, video: true, dur: s ? Math.round(s.dur) : 0, bytes: file.size }; }
+const isVideo = f => /^video\//.test(f.type) || /\.(mov|mp4|m4v|webm)$/i.test(f.name || '');
+const tooBig = f => isVideo(f) && f.size > VIDEO_MAX;
 // a photo is stored twice: the photo (2048px) and a small preview (480px) for grids and strips
 async function storePhoto(file, mirror){ let img; try { img = await decodeImage(file); } catch (e) { const asset = await Store.putBlob(file, 'jpg'); return { asset }; }
   const big = await toJpeg(scaleTo(img, img.naturalWidth, img.naturalHeight, 2048, mirror), .9); const small = await toJpeg(scaleTo(img, img.naturalWidth, img.naturalHeight, 480, mirror), .8);
@@ -1023,7 +1090,7 @@ function renderProfile(app){
     <div class="glass"><div class="row"><span style="font-size:13.5px">Photos</span><div class="seg" style="width:150px"><button class="${s.photoStyle==='polaroid'?'on':''}" data-act="photoStyle|polaroid">Polaroid</button><button class="${s.photoStyle==='clean'?'on':''}" data-act="photoStyle|clean">Clean</button></div></div></div>
     <div class="glass"><div class="row"><span style="font-size:13.5px">Sky</span><div class="seg" style="width:200px"><button class="${(s.sky||'auto')==='auto'?'on':''}" data-act="sky|auto">Follow</button><button class="${s.sky==='light'?'on':''}" data-act="sky|light">Light</button><button class="${s.sky==='dark'?'on':''}" data-act="sky|dark">Dark</button></div></div></div>
     <div class="glass"><div class="row"><span style="font-size:13.5px">Where I am</span><select class="in" style="width:auto;padding:6px 10px;font-size:12px" data-act="myCity" data-on="change">${Object.keys(CITIES).map(c => `<option ${me.city===c?'selected':''}>${c}</option>`).join('')}</select></div></div>
-    <div class="list" style="font-size:13.5px"><div class="row"><span>Together since</span><input class="in" type="date" value="${esc(s.anniversary||'')}" data-act="anniEdit" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div><div class="row"><span>My birthday</span><input class="in" type="date" value="${esc(me.birthday||'')}" data-act="bdayEdit|${me.id}" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div>${D.other() ? `<div class="row"><span>${esc(D.other().name)}'s birthday</span><input class="in" type="date" value="${esc(D.other().birthday||'')}" data-act="bdayEdit|${D.other().id}" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div>` : ''}<button class="row" data-go="gcal"><span>Google Calendar</span><span class="l">${(me.icsUrls||[]).length ? 'live · ' + me.icsUrls.length : 'connect'} ›</span></button><button class="row" data-go="emails"><span>Trip emails</span><span class="l">›</span></button><button class="row" data-go="notify"><span>Notifications</span><span class="l">${pushState.on ? 'on' : 'off'} ›</span></button><button class="row" data-go="chat"><span>Chat</span><span class="l">${D.bubbles().length} ›</span></button><button class="row" data-go="money"><span>My money</span><span class="l">only you ›</span></button><button class="row" data-go="cycle"><span>Cycle</span><span class="l">›</span></button><button class="row" data-act="howto"><span>How it works</span><span class="l">›</span></button><button class="row" data-act="whatsNew"><span>What's new</span><span class="l">v${APP_VERSION} ›</span></button><button class="row" data-act="exportAll"><span>Export everything</span><span class="l">backup ›</span></button><button class="row" data-act="importAll"><span>Restore a backup</span><span class="l">›</span></button>
+    <div class="list" style="font-size:13.5px"><div class="row"><span>Together since</span><input class="in" type="date" value="${esc(s.anniversary||'')}" data-act="anniEdit" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div><div class="row"><span>My birthday</span><input class="in" type="date" value="${esc(me.birthday||'')}" data-act="bdayEdit|${me.id}" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div>${D.other() ? `<div class="row"><span>${esc(D.other().name)}'s birthday</span><input class="in" type="date" value="${esc(D.other().birthday||'')}" data-act="bdayEdit|${D.other().id}" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div>` : ''}<button class="row" data-go="gcal"><span>Google Calendar</span><span class="l">${(me.icsUrls||[]).length ? 'live · ' + me.icsUrls.length : 'connect'} ›</span></button><button class="row" data-go="emails"><span>Trip emails</span><span class="l">›</span></button><button class="row" data-go="notify"><span>Notifications</span><span class="l">${pushState.on ? 'on' : 'off'} ›</span></button><button class="row" data-go="chat"><span>Chat</span><span class="l">${D.bubbles().length} ›</span></button><button class="row" data-go="search"><span>Search</span><span class="l">memories, notes, songs, chat ›</span></button><button class="row" data-go="money"><span>My money</span><span class="l">only you ›</span></button><button class="row" data-go="cycle"><span>Cycle</span><span class="l">›</span></button><button class="row" data-act="howto"><span>How it works</span><span class="l">›</span></button><button class="row" data-act="whatsNew"><span>What's new</span><span class="l">v${APP_VERSION} ›</span></button><button class="row" data-act="exportAll"><span>Export everything</span><span class="l">backup ›</span></button><button class="row" data-act="importAll"><span>Restore a backup</span><span class="l">›</span></button><button class="row" data-act="storageSheet"><span>Storage</span><span class="l">how full ›</span></button>
     ${Store.mode === 'supabase' ? `<button class="row" data-act="${Store.user?'signout':'signinSheet'}"><span>${Store.user ? 'Signed in · ' + esc(Store.user.email) : 'Sign in to sync'}</span><span class="l">›</span></button>` : `<div class="row"><span>Sync</span><span class="l">local only · add Supabase keys</span></div>`}
     <button class="row" data-act="switchUser"><span>Switch person</span><span class="l">›</span></button><button class="row" data-act="resetAll"><span class="muted">Start over</span><span class="l">›</span></button></div>
   </div>${nav('')}`;
@@ -1252,7 +1319,7 @@ function renderMemories(app){
   const all = { trips: D.trips().filter(t => t.start <= today()).length, days: D.trips().filter(t => t.start <= today()).reduce((s,t) => s + Math.min(daysBetween(t.start, t.end)+1, daysBetween(t.start, today())+1), 0), moments: D.moments().filter(m => m.kind === 'moment').length };
   const dash = v => future ? '–' : v;
   const prev = new Date(memMonth.y, memMonth.m-1, 1), next = new Date(memMonth.y, memMonth.m+1, 1);
-  app.innerHTML = `<div class="screen"><div class="bar"><span>Memories · ${memMonth.y}</span><button data-go="profile">${palOf(D.me().id)} Profile</button></div>
+  app.innerHTML = `<div class="screen"><div class="bar"><span style="display:flex;gap:10px;align-items:center"><span>Memories · ${memMonth.y}</span><button class="chip" data-go="search">⌕ Search</button></span><button data-go="profile">${palOf(D.me().id)} Profile</button></div>
     ${months != null && months >= 0 ? `<div class="l center" style="margin-top:6px">Month ${months} <i class="heart"></i></div>` : ''}
     <div class="monthnav" style="margin-top:-10px"><button class="l" data-act="memNav|-1">‹ ${MON[prev.getMonth()]}</button><h1 class="hd">${MONTHS[memMonth.m]}</h1><button class="l" data-act="memNav|1">${MON[next.getMonth()]} ›</button></div>
     <div class="stats"><div><b>${dash(trips.length)}</b><span class="l">trip${trips.length===1?'':'s'}</span></div><div><b>${dash(daysTogether)}</b><span class="l">days</span></div><div><b>${dash(meals.length)}</b><span class="l">meals</span></div><div><b>${dash(ms.length)}</b><span class="l">moments</span></div></div>
@@ -1331,17 +1398,17 @@ ACT.stkTray = () => { openSheet(`<div class="bar"><button data-act="closeSheet">
 let chatDraft = '', chatThink = false;
 function chatMsgBody(b){
   if (b.sticker) return stkHTML(b.sticker, 'cstk');
-  if (b.photo) return `<button class="cph" data-act="chatPhoto|${b.id}"><img data-thumb="${b.photo}" data-pv="${b.thumb || ''}" alt=""></button>${b.text && !b.auto ? `<div class="b">${esc(b.text)}</div>` : ''}`;
+  if (b.photo) return `<button class="cph" data-act="chatPhoto|${b.id}"><img ${b.video ? `data-asset="${b.thumb || ''}"` : `data-thumb="${b.photo}" data-pv="${b.thumb || ''}"`} alt="">${b.video ? `<i class="vbadge">▶${b.dur ? ' ' + fmtDur(b.dur) : ''}</i>` : ''}</button>${b.text && !b.auto ? `<div class="b">${esc(b.text)}</div>` : ''}`;
   return `<div class="b ${b.kind === 'think' ? 'think' : ''}">${esc(b.text)}</div>`;
 }
 function renderChat(app){
   const me = D.me(); const all = D.bubbles().slice().sort((a,b) => a.at - b.at); let lastDay = '';
   const hadFocus = document.activeElement && document.activeElement.id === 'chat-in'; markSeen('chat');
-  const rows = all.map(b => { const d = new Date(b.at); const day = isoDate(d); const sep = day !== lastDay ? `<div class="daysep">${day === today() ? 'Today' : fmtD(day)}</div>` : ''; lastDay = day; const u = D.user(b.userId) || {}; const mode = skyMode(u, d); return sep + `<div class="msg ${b.userId === me.id ? 'me' : ''} ${b.sticker ? 'sticker' : ''}"><i class="pal ${u.pal||'bunny'}"></i><div>${chatMsgBody(b)}<div class="t">${timeIn(u, d)} ${wx(mode === 'night' ? 'moon' : 'sun')}</div></div></div>`; }).join('');
+  const rows = all.map(b => { const d = new Date(b.at); const day = isoDate(d); const sep = day !== lastDay ? `<div class="daysep">${day === today() ? 'Today' : fmtD(day)}</div>` : ''; lastDay = day; const u = D.user(b.userId) || {}; const mode = skyMode(u, d); return sep + `<div class="msg ${b.userId === me.id ? 'me' : ''} ${b.sticker ? 'sticker' : ''}" data-id="${b.id}"><i class="pal ${u.pal||'bunny'}"></i><div>${chatMsgBody(b)}<div class="t">${timeIn(u, d)} ${wx(mode === 'night' ? 'moon' : 'sun')}</div></div></div>`; }).join('');
   const month = all.filter(b => isoDate(new Date(b.at)).slice(0,7) === today().slice(0,7)).length;
   app.innerHTML = `<div class="screen"><div class="bar"><button data-go="home">‹ Home</button><span>Chat</span></div><div class="row"><span class="hd" style="font-size:32px">${D.users2().map(u => `<i class="pal ${u.pal}" style="width:28px;height:28px;vertical-align:-6px"></i>`).join('')}</span><span class="l">${month} this month</span></div><div class="chat">${rows || '<div class="empty">Nothing said yet. Say something below.</div>'}</div>
     <div class="composer"><button class="cbtn" data-act="chatPick" aria-label="Photo">◫</button><button class="cbtn" data-act="chatStk" aria-label="Sticker">☺</button><input class="in" id="chat-in" placeholder="${chatThink ? 'what are you thinking?' : 'say something'}" value="${esc(chatDraft)}" data-act="chatType" data-on="input" autocomplete="off" enterkeyhint="send"><button class="cbtn ${chatThink ? 'on' : ''}" data-act="chatThink" aria-label="Think">💭</button><button class="btn sm" data-act="chatSend">Send</button></div>
-    <input type="file" id="chat-file" accept="image/*" multiple hidden data-act="chatFiles" data-on="change">
+    <input type="file" id="chat-file" accept="image/*,video/*" multiple hidden data-act="chatFiles" data-on="change">
   </div>${nav('home')}`;
   const inp = $('#chat-in'); inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); ACT.chatSend(); } }; if (hadFocus) inp.focus();
   setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 0);
@@ -1351,12 +1418,12 @@ ACT.chatThink = () => { chatThink = !chatThink; render(); const i = $('#chat-in'
 ACT.chatSend = async () => { const el = $('#chat-in'); const text = (el ? el.value : chatDraft).trim(); if (!text) return; chatDraft = ''; await Store.put('bubbles', { id: Store.uid(), userId: D.me().id, kind: chatThink ? 'think' : 'say', text, at: Date.now() }); chatThink = false; render(); const i = $('#chat-in'); if (i) i.focus(); };
 ACT.chatPick = () => $('#chat-file').click();
 ACT.chatFiles = async (a, el) => { const files = Array.from(el.files || []); if (!files.length) return; const text = chatDraft.trim(); chatDraft = ''; toast(files.length === 1 ? 'Sending…' : 'Sending ' + files.length + ' photos…');
-  for (const [i, f] of files.entries()) { const ph = await storePhoto(f); await Store.put('bubbles', { id: Store.uid(), userId: D.me().id, kind: 'say', photo: ph.asset, thumb: ph.thumb, text: i === 0 && text ? text : '📷 Photo', auto: !(i === 0 && text), at: Date.now() + i }); }
+  for (const [i, f] of files.entries()) { if (tooBig(f)) { toast(`That video is ${Math.round(f.size / 1048576)} MB — the limit is 50 MB`); continue; } const vid = isVideo(f); const ph = vid ? await storeVideo(f) : await storePhoto(f); await Store.put('bubbles', Object.assign({ id: Store.uid(), userId: D.me().id, kind: 'say', photo: ph.asset, thumb: ph.thumb, text: i === 0 && text ? text : vid ? '🎬 Video' : '📷 Photo', auto: !(i === 0 && text), at: Date.now() + i }, vid ? { video: true, dur: ph.dur } : {})); }
   render(); };
 ACT.chatStk = () => openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Send a sticker</span></div>${stickerTray('chatSendStk')}<div class="l">Hold one of yours to remove it.</div>`, sh => { sh.dataset.tray = 'chatSendStk'; bindHold(sh); });
 ACT.chatSendStk = async arg => { const s = stkFrom(arg); closeSheet(); await Store.put('bubbles', { id: Store.uid(), userId: D.me().id, kind: 'say', sticker: s, text: 'sent a sticker', auto: true, at: Date.now() }); render(); };
 ACT.chatPhoto = id => { const b = Store.get('bubbles', id); if (!b) return; prefetch(b.photo); const mine = b.userId === D.me().id; const u = D.user(b.userId) || {};
-  openSheet(`<div class="vtop"><button data-act="closeSheet">‹ Chat</button><span>${esc(u.name||'')} · ${fmtD(isoDate(new Date(b.at)))}</span></div><div class="vimg fit"><img data-asset="${b.photo}" alt=""></div><div class="vbody">${b.text && !b.auto ? `<div style="font-size:14px">${esc(b.text)}</div>` : ''}<div class="vact"><button data-act="shareAsset|${b.photo}">Save to phone</button>${mine ? `<button data-act="chatDelPhoto|${b.id}">Delete</button>` : ''}</div></div>`, null, 'viewer'); };
+  openSheet(`<div class="vtop"><button data-act="closeSheet">‹ Chat</button><span>${esc(u.name||'')} · ${fmtD(isoDate(new Date(b.at)))}</span></div><div class="vstrip" style="overflow:hidden"><div class="vslide"><div class="vzoom">${b.video ? `<video controls playsinline preload="metadata" data-asset="${b.photo}"></video>` : `<img data-asset="${b.photo}" alt="">`}</div></div></div><div class="vbody">${b.text && !b.auto ? `<div style="font-size:14px">${esc(b.text)}</div>` : ''}<div class="vact"><button data-act="shareAsset|${b.photo}">Save to phone</button>${mine ? `<button data-act="chatDelPhoto|${b.id}">Delete</button>` : ''}</div></div>`, sh => { const sl = sh.querySelector('.vslide'); if (sl && !b.video) attachZoom(sl, null); }, 'viewer'); };
 ACT.chatDelPhoto = async id => { if (!await ask('Delete this photo?', { sub: 'It\'s removed from the chat for both of you.', ok: 'Delete' })) return; const b = Store.get('bubbles', id); if (b && b.photo) { Store.removeBlob(b.photo); if (b.thumb) Store.removeBlob(b.thumb); } await Store.remove(id); closeSheet(); render(); };
 
 // ---------- V2.9: things to do together (lists) ----------
@@ -1409,6 +1476,7 @@ function allSongs(){ return D.moments().filter(m => m.kind !== 'plan').flatMap(m
 function renderSongs(app){
   const ss = allSongs(); const first = ss[0];
   app.innerHTML = `<div class="screen"><div class="bar"><button data-go="memories">‹ Memories</button><span>${ss.length} song${ss.length === 1 ? '' : 's'}</span></div><h1 class="hd">Our songs</h1>
+    ${spotifyCardHTML(ss)}
     ${first ? songCard(first.sg, first.m.authorId) : ''}
     <div class="list">${ss.map(({ sg, m }) => `<div class="row"><button style="flex:1;text-align:left;display:flex;gap:10px;align-items:center" data-go="day/${m.tripId || 'none'}_${m.date}">${palOf(m.authorId)}<span><div style="font-weight:500">${esc(sg.title || 'A song')}</div><div class="l">${esc(sg.artist || 'Spotify')} · ${fmtD(m.date)} ${m.date.slice(0,4)}${m.tripId && D.trip(m.tripId) ? ' · ' + esc(D.trip(m.tripId).city) : ''}${m.text ? ' · ' + esc(m.text.slice(0, 30)) : ''}</div></span></button><a class="l" href="${esc(sg.url)}" target="_blank" rel="noopener">♫ open</a></div>`).join('') || '<div class="empty">Songs you add to memories collect here.</div>'}</div>
     <button class="btn lite block" data-act="songAdd">+ Add a song</button>
@@ -1423,7 +1491,7 @@ function onThisDay(){ const td = today(); const ms = D.moments().filter(m => m.k
   if (!pool.length) return null; const withPh = pool.filter(m => (m.photos||[]).length); const pick = (withPh.length ? withPh : pool).sort((a, b) => a.date.localeCompare(b.date))[0];
   const sameDay = pool.filter(m => m.date === pick.date); const yrs = +td.slice(0,4) - +pick.date.slice(0,4); const mos = yrs * 12 + (+td.slice(5,7) - +pick.date.slice(5,7));
   return { m: pick, all: sameDay, label: years.length ? (yrs === 1 ? 'A year ago today' : yrs + ' years ago today') : (mos === 1 ? 'A month ago today' : mos + ' months ago today') }; }
-function onThisDayHTML(){ const o = onThisDay(); if (!o) return ''; const m = o.m; const t = m.tripId && D.trip(m.tripId); const phs = o.all.flatMap(x => (x.photos||[]).map(p => p.asset)).slice(0, 3);
+function onThisDayHTML(){ const o = onThisDay(); if (!o) return ''; const m = o.m; const t = m.tripId && D.trip(m.tripId); const phs = o.all.flatMap(x => (x.photos||[]).map(p => p.video ? p.thumb : (p.thumb || p.asset))).filter(Boolean).slice(0, 3);
   return `<button class="glass tap otd" data-go="day/${m.tripId || 'none'}_${m.date}"><div class="row"><span class="l">On this day · ${esc(o.label)}</span><span class="l">${fmtD(m.date)}${t ? ' · ' + esc(t.city) : ''}</span></div>${phs.length ? `<div class="otdph">${phs.map(a => `<i data-asset="${a}"></i>`).join('')}</div>` : ''}<div style="font-size:14px;font-weight:500;margin-top:8px;text-align:left">${esc(m.text || m.title || (D.songs(m)[0] || {}).title || (phs.length ? 'Photos' : 'A memory'))}</div></button>`; }
 
 // ---------- V2.9: map ----------
@@ -1480,7 +1548,7 @@ function readExif(buf){
     let latRef = 'N', lonRef = 'E', lat = null, lon = null;
     ifd(gpsP, (tag, type, cnt, vo) => { if (tag === 1) latRef = String.fromCharCode(u8[start + vo]); else if (tag === 3) lonRef = String.fromCharCode(u8[start + vo]); else if (tag === 2 && cnt === 3) lat = dms(vo); else if (tag === 4 && cnt === 3) lon = dms(vo); });
     if (lat != null && lon != null && (lat || lon)) { out.lat = latRef === 'S' ? -lat : lat; out.lon = lonRef === 'W' ? -lon : lon; }
-    const d = (out.date || out.date0 || '').match(/^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2})/); if (d && d[1] !== '0000') out.dt = `${d[1]}-${d[2]}-${d[3]}T${d[4]}:${d[5]}`;
+    const d = (out.date || out.date0 || '').match(/^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2})/); if (d && d[1] !== '0000') { out.dt = `${d[1]}-${d[2]}-${d[3]}T${d[4]}:${d[5]}`; const sec = (out.date || out.date0 || '').match(/^\d{4}:\d{2}:\d{2}[ T]\d{2}:\d{2}:(\d{2})/); out.dts = out.dt + ':' + (sec ? sec[1] : '00'); }
     return out;
   } catch (e) { return null; }
 }
@@ -1488,7 +1556,7 @@ const imgTime = dt => { const h = +dt.slice(11, 13), m = dt.slice(14, 16); retur
 const dtMin = dt => +dt.slice(11, 13) * 60 + +dt.slice(14, 16);
 const dtMs = dt => new Date(+dt.slice(0, 4), +dt.slice(5, 7) - 1, +dt.slice(8, 10), +dt.slice(11, 13), +dt.slice(14, 16)).getTime();
 function kmBetween(a, b){ const R = 6371, r = x => x * Math.PI / 180; const dLat = r(b.lat - a.lat), dLon = r(b.lon - a.lon); const h = Math.sin(dLat / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(dLon / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); }
-async function thumbOf(file){ try { const img = await createImageBitmap(file); const s = 220 / Math.max(img.width, img.height); const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(img.width * Math.min(1, s))); c.height = Math.max(1, Math.round(img.height * Math.min(1, s))); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); if (img.close) img.close(); const b = await new Promise(r => c.toBlob(r, 'image/jpeg', .7)); return URL.createObjectURL(b); } catch (e) { return URL.createObjectURL(file); } }
+async function thumbOf(file, info){ try { const img = await createImageBitmap(file); if (info) { info.w = img.width; info.h = img.height; } const s = 220 / Math.max(img.width, img.height); const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(img.width * Math.min(1, s))); c.height = Math.max(1, Math.round(img.height * Math.min(1, s))); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); if (img.close) img.close(); const b = await new Promise(r => c.toBlob(r, 'image/jpeg', .7)); return URL.createObjectURL(b); } catch (e) { return URL.createObjectURL(file); } }
 
 let imp = null;   // the import in progress; lives only on this phone until "Make memories"
 // start an import from a trip (photos outside its dates start skipped) or from anywhere ('' = sorted by date into whatever trip matches)
@@ -1506,9 +1574,11 @@ async function importRead(tripId, files, more){
     // no EXIF time: fall back to the file's date, unless that's just "now" (the picker re-saved it)
     if (!dt && file.lastModified && now - file.lastModified > 10 * 60000) { const d = new Date(file.lastModified); dt = isoDate(d) + 'T' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
     const screen = !ex.make && !ex.model && (/png/i.test(file.type) || /screenshot/i.test(file.name));
-    const it = { id: 'i' + (impSeq++), file, dt, lat: ex.lat, lon: ex.lon, screen, hasExif: !!ex.dt, thumb: await thumbOf(file), out: false }; imp.items.push(it); fresh.push(it);
+    const info = {}; const thumb = await thumbOf(file, info);
+    const it = { id: 'i' + (impSeq++), file, dt, lat: ex.lat, lon: ex.lon, screen, hasExif: !!ex.dt, thumb, out: false, sig: ex.dts && info.w ? ex.dts + '|' + Math.max(info.w, info.h) + 'x' + Math.min(info.w, info.h) : '' }; imp.items.push(it); fresh.push(it);
     imp.done = i + 1; const pr = $('#imp-prog'); if (pr) pr.textContent = `Reading ${imp.done} of ${imp.total}…`;
   }
+  const pr = $('#imp-prog'); if (pr) pr.textContent = 'Checking for photos already in the app…'; await markDups(fresh);
   if (more) importPlace(fresh); else imp.groups = buildGroups(fresh);
   imp.stage = 'review'; if (route.name === 'import') render(); importPlaces();
 }
@@ -1516,14 +1586,28 @@ const impTrip = () => imp && imp.tripId ? D.trip(imp.tripId) : null;
 const byTime = (a, b) => (a.dt || '9999').localeCompare(b.dt || '9999');
 function newGroup(kind, date, items){ return { id: 'g' + (impSeq++), kind, date, items: items.map(x => x.id) }; }
 // group photos: by day, then a new moment after a 90-minute gap or a move of more than 1.5 km
+// Skip what's already here: the same photo has the same taken-at second and size. Photos imported before this
+// check existed are compared by look (a tiny fingerprint) against ones from the same minute that day.
+async function aHash(src){ try { const img = new Image(); img.src = src; await img.decode(); const c = document.createElement('canvas'); c.width = 9; c.height = 8; const x = c.getContext('2d'); x.drawImage(img, 0, 0, 9, 8); const d = x.getImageData(0, 0, 9, 8).data; let bits = ''; for (let r = 0; r < 8; r++) for (let k = 0; k < 8; k++) { const i = (r * 9 + k) * 4, j = i + 4; bits += (d[i] + d[i + 1] + d[i + 2]) > (d[j] + d[j + 1] + d[j + 2]) ? '1' : '0'; } return bits; } catch (e) { return null; } }
+const hamming = (a, b) => { let n = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) n++; return n; };
+async function markDups(items){
+  const have = new Set(); const byMinute = {}; D.moments().forEach(m => (m.photos || []).forEach(p => { if (p.video) return; if (p.sig) have.add(p.sig); else if (p.taken) (byMinute[m.date + 'T' + p.taken] = byMinute[m.date + 'T' + p.taken] || []).push(p); }));
+  const seen = new Set(imp.items.filter(x => !items.includes(x) && x.sig).map(x => x.sig)); const hashes = new Map();
+  for (const x of items) {
+    if (x.sig && (have.has(x.sig) || seen.has(x.sig))) { x.dup = true; continue; } if (x.sig) seen.add(x.sig);
+    const cands = x.dt ? byMinute[x.dt.slice(0, 16)] : null; if (!cands || !cands.length) continue;
+    const h = await aHash(x.thumb); if (!h) continue;
+    for (const p of cands) { if (!hashes.has(p.asset)) { const u = await previewUrl(p.asset, p.thumb); hashes.set(p.asset, u ? await aHash(u) : null); } const ph = hashes.get(p.asset); if (ph && hamming(h, ph) <= 6) { x.dup = true; break; } } } }
 function buildGroups(items){
   const t = impTrip(); const groups = []; let g = null, prev = null;
+  const dups = items.filter(x => x.dup); items = items.filter(x => !x.dup);
   for (const x of items.filter(x => x.dt && !x.screen).sort(byTime)) {
     const far = prev && prev.lat != null && x.lat != null && kmBetween(prev, x) > 1.5;
     if (!g || prev.dt.slice(0, 10) !== x.dt.slice(0, 10) || dtMs(x.dt) - dtMs(prev.dt) > 90 * 60000 || far) { g = newGroup('time', x.dt.slice(0, 10), []); groups.push(g); }
     g.items.push(x.id); prev = x; }
   const unknown = items.filter(x => !x.dt && !x.screen); if (unknown.length) groups.push(newGroup('unknown', t ? (today() >= t.start && today() <= t.end ? today() : t.start) : today(), unknown));
   const screens = items.filter(x => x.screen); if (screens.length) { const s = newGroup('screens', screens[0].dt ? screens[0].dt.slice(0, 10) : (t ? t.start : today()), screens); s.skip = true; groups.push(s); }
+  if (dups.length) { const g = newGroup('dups', dups[0].dt ? dups[0].dt.slice(0, 10) : (t ? t.start : today()), dups); g.skip = true; g.title = 'Already in the app'; g.edited = true; groups.push(g); }
   groups.forEach(g => { g.outside = !!(t && g.kind === 'time' && (g.date < t.start || g.date > t.end)); if (g.outside) g.skip = true; importGuess(g); });
   return groups;
 }
@@ -1532,7 +1616,8 @@ function importPlace(fresh){
   const left = [];
   for (const x of fresh) {
     let home = null;
-    if (x.screen) home = imp.groups.find(g => g.kind === 'screens');
+    if (x.dup) home = imp.groups.find(g => g.kind === 'dups');
+    else if (x.screen) home = imp.groups.find(g => g.kind === 'screens');
     else if (!x.dt) home = imp.groups.find(g => g.kind === 'unknown');
     else home = imp.groups.find(g => { if (g.kind !== 'time' || g.date !== x.dt.slice(0, 10)) return false; const sp = groupSpan(g); return sp && dtMs(x.dt) >= dtMs(sp.a) - 90 * 60000 && dtMs(x.dt) <= dtMs(sp.b) + 90 * 60000; });
     if (home) { home.items.push(x.id); sortGroup(home); importGuess(home); } else left.push(x);
@@ -1574,11 +1659,11 @@ function renderImport(app){
   const days = [...new Set(imp.groups.map(g => g.date))].sort(); const live = imp.groups.filter(g => !g.skip && groupItems(g).some(x => !x.out));
   const card = (g, i, list) => { const gi = groupItems(g); const sp = groupSpan(g); const n = gi.filter(x => !x.out).length; const nxt = list[i + 1];
     if (g.skip) return `<button class="glass impg skip row" data-act="impSkip|${g.id}"><span class="itick"></span><span style="flex:1;text-align:left"><b style="font-weight:500">${esc(g.title || (g.kind === 'unknown' ? 'No time' : 'Moment'))}</b> <span class="l">· ${gi.length} photo${gi.length === 1 ? '' : 's'}${g.outside ? ' · outside the trip dates' : ''}</span></span><span class="l">Skipped · tap to include</span></button>`;
-    const meta = `${g.kind === 'unknown' ? 'No time on these · ' : g.kind === 'screens' ? 'Screenshots · ' : sp ? imgTime(sp.a) + (sp.b !== sp.a ? ' – ' + imgTime(sp.b) : '') + ' · ' : ''}${n} photo${n === 1 ? '' : 's'}${g.place && (g.place.name || g.place.area) ? ' · 📍 ' + esc(g.place.name || g.place.area) : ''}${g.from === 'plan' && !g.edited ? ' · from your plans' : ''}`;
+    const meta = `${g.kind === 'unknown' ? 'No time on these · ' : g.kind === 'screens' ? 'Screenshots · ' : g.kind === 'dups' ? 'Already in the app — skipped so nothing doubles up · ' : sp ? imgTime(sp.a) + (sp.b !== sp.a ? ' – ' + imgTime(sp.b) : '') + ' · ' : ''}${n} photo${n === 1 ? '' : 's'}${g.place && (g.place.name || g.place.area) ? ' · 📍 ' + esc(g.place.name || g.place.area) : ''}${g.from === 'plan' && !g.edited ? ' · from your plans' : ''}`;
     const strip = gi.map((x, k) => `<button class="ph ${x.out ? 'out' : ''} ${sel.includes(x.id) ? 'sel' : ''}" data-act="impTap|${x.id}"><img src="${x.thumb}" alt="">${x.dt && g.kind !== 'unknown' ? `<span>${imgTime(x.dt)}</span>` : ''}</button>`).join('');
     return `<div class="glass impg"><div class="row" style="gap:10px;align-items:flex-start"><button class="itick on" data-act="impSkip|${g.id}" aria-label="Skip this moment">✓</button><div style="flex:1;min-width:0"><input class="in imptitle" data-act="impTitle|${g.id}" data-on="change" value="${esc(g.title || '')}" placeholder="${g.kind === 'unknown' ? 'What were these?' : 'Name this moment'}"><div class="l" style="margin-top:4px">${meta}</div></div></div>
       <div class="impstrip">${strip}</div>
-      <div class="row" style="margin-top:8px;gap:6px;justify-content:flex-start;flex-wrap:wrap">${g.kind !== 'time' ? `<input class="in" type="date" value="${g.date}" data-act="impDate|${g.id}" data-on="change" style="width:auto;padding:5px 8px;font-size:12px">` : ''}${nxt && nxt.kind === 'time' && g.kind === 'time' && !nxt.skip ? `<button class="chip" data-act="impMerge|${g.id}">Merge with next</button>` : ''}<span class="l" style="margin-left:auto">tap photos to move them</span></div></div>`; };
+      <div class="row" style="margin-top:8px;gap:6px;justify-content:flex-start;flex-wrap:wrap">${g.kind !== 'time' && g.kind !== 'dups' ? `<input class="in" type="date" value="${g.date}" data-act="impDate|${g.id}" data-on="change" style="width:auto;padding:5px 8px;font-size:12px">` : ''}${nxt && nxt.kind === 'time' && g.kind === 'time' && !nxt.skip ? `<button class="chip" data-act="impMerge|${g.id}">Merge with next</button>` : ''}<span class="l" style="margin-left:auto">tap photos to move them</span></div></div>`; };
   app.innerHTML = `<div class="screen"><div class="bar"><button data-act="impCancel">Cancel</button><span>${its.length} photos</span></div><h1 class="hd">Check your moments</h1>
     <div class="glass deep" style="font-size:12.5px"><div class="row"><span>Time taken</span><span class="l">${withT} of ${its.length}</span></div><div class="row" style="margin-top:4px"><span>Location</span><span class="l">${withL} of ${its.length}</span></div>${!withL ? `<div class="l" style="margin-top:6px">Your phone didn't share locations, so places aren't guessed. Choosing photos through Files usually keeps them.</div>` : ''}${withT < its.length ? `<div class="l" style="margin-top:6px">Photos without a time are grouped at the end — pick their day there.</div>` : ''}</div>
     <button class="btn lite block" data-act="importMore">+ Add more photos</button>
@@ -1612,7 +1697,7 @@ ACT.impSave = async () => {
   let made = 0; const tripsUsed = new Set();
   for (const g of live) {
     const photos = [];
-    for (const x of groupItems(g).filter(x => !x.out)) { const ph = await storePhoto(x.file); photos.push({ asset: ph.asset, thumb: ph.thumb, polaroid: false, stickers: [], taken: x.dt ? x.dt.slice(11, 16) : '' }); mine.saved++; const pr = $('#imp-prog'); if (pr) pr.textContent = `${mine.saved} of ${mine.toSave}…`; }
+    for (const x of groupItems(g).filter(x => !x.out)) { const ph = await storePhoto(x.file); photos.push({ asset: ph.asset, thumb: ph.thumb, polaroid: false, stickers: [], taken: x.dt ? x.dt.slice(11, 16) : '', sig: x.sig || '' }); mine.saved++; const pr = $('#imp-prog'); if (pr) pr.textContent = `${mine.saved} of ${mine.toSave}…`; }
     const sp = groupSpan(g); const trip = t0 && g.date >= t0.start && g.date <= t0.end ? t0 : D.tripForDate(g.date); if (trip) tripsUsed.add(trip.id);
     await Store.put('moments', { id: Store.uid(), tripId: trip ? trip.id : '', date: g.date, authorId: me.id, kind: 'moment', text: g.title || '', photos, items: [], time: sp && g.kind === 'time' ? sp.a.slice(11, 16) : '', place: g.place && g.place.lat != null ? g.place : null, imported: true, createdAt: sp && g.kind === 'time' ? dtMs(sp.a) : Date.now() + made, addedAt: Date.now() });
     made++;
@@ -1930,8 +2015,77 @@ ACT.cycLog = d => { const lg = JSON.parse(JSON.stringify(Store.get('clog', 'cl_'
 function cycleHomeHTML(){ const owner = cycOwner(); const ou = D.user(owner); if (!ou) return ''; const c = cycleData(); if (!c.last) return ''; const at = cycleAt(c, todayIn(ou)); if (!at) return ''; const ph = PHASES[at.phase];
   return `<button class="glass pill row tap" style="display:flex" data-go="cycle"><span class="l"><i class="cdot" style="background:${ph.color}"></i>${owner === D.me().id ? 'Your cycle' : esc(ou.name) + '\'s cycle'}</span><span style="font-size:13px;font-weight:500">day ${at.n} · ${ph.name}${at.late ? ' · ' + at.late + 'd late' : ''} ›</span></button>`; }
 
+// ---------- V2.14: Our songs → a Spotify playlist ----------
+// Sign-in uses Spotify's PKCE flow (no secret in the app). The connection lives in your shared data, so either of you can press Update.
+const SPOTIFY_ID = CFG.SPOTIFY_CLIENT_ID || 'c3fe15b85915440a8bd22d7aeec30398';
+const SP_SCOPES = 'playlist-modify-public playlist-modify-private playlist-read-private playlist-read-collaborative';
+const spRedirect = () => location.origin + location.pathname;
+const spDoc = () => Store.get('spotify', 'spotify');
+const trackUri = url => { const m = String(url || '').match(/track[\/:]([A-Za-z0-9]{22})/); return m ? 'spotify:track:' + m[1] : null; };
+function songUris(ss){ const seen = new Set(), out = []; ss.slice().reverse().forEach(({ sg }) => { const u = trackUri(sg.url); if (u && !seen.has(u)) { seen.add(u); out.push(u); } }); return out; }
+function spotifyCardHTML(ss){ const d = spDoc(); const uris = songUris(ss); const skipped = ss.length - uris.length;
+  if (!d || !d.refresh) return `<div class="glass"><div style="font-weight:500">Make it a Spotify playlist</div><div class="sub" style="text-align:left;margin-top:4px">Every song from your memories in one playlist. Connect once; after that “Update” adds only the new ones.${navigator.standalone ? '<br><b>First time:</b> do this in Safari or on your Mac — a Home Screen app can\'t come back from Spotify\'s sign-in.' : ''}</div><button class="btn block" style="margin-top:10px" data-act="spConnect">Connect Spotify</button></div>`;
+  const added = new Set(d.uris || []); const fresh = uris.filter(u => !added.has(u)).length;
+  return `<div class="glass"><div class="row"><span style="font-weight:500">${d.playlistId ? 'Our songs ♡ on Spotify' : 'Spotify connected'}</span><span class="l">${esc(d.name || '')}</span></div>
+    ${d.playlistId ? `<div class="row" style="margin-top:10px;gap:8px"><a class="btn lite sm" style="flex:1" href="${esc(d.playlistUrl || 'https://open.spotify.com/playlist/' + d.playlistId)}" target="_blank" rel="noopener">Open in Spotify</a><button class="btn sm" style="flex:1" data-act="spSync" ${fresh ? '' : ''}>Update playlist${fresh ? ' · ' + fresh + ' new' : ''}</button></div>` : `<button class="btn block" style="margin-top:10px" data-act="spSync">Make our playlist · ${uris.length} song${uris.length === 1 ? '' : 's'}</button>`}
+    <div class="l" style="margin-top:8px">${skipped > 0 ? skipped + ' link' + (skipped === 1 ? ' isn\'t a' : 's aren\'t') + ' Spotify song' + (skipped === 1 ? '' : 's') + ' (albums, podcasts, YouTube) — skipped. ' : ''}<button class="l" data-act="spDisconnect" style="text-decoration:underline">disconnect</button></div></div>`; }
+const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+ACT.spConnect = async () => { const rnd = n => { const a = new Uint8Array(n); crypto.getRandomValues(a); return Array.from(a, x => 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~'[x % 66]).join(''); };
+  const v = rnd(64), state = rnd(16); const ch = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(v)));
+  localStorage.setItem('dj.sp.pkce', JSON.stringify({ v, state })); location.href = 'https://accounts.spotify.com/authorize?' + new URLSearchParams({ response_type: 'code', client_id: SPOTIFY_ID, scope: SP_SCOPES, redirect_uri: spRedirect(), code_challenge_method: 'S256', code_challenge: ch, state }); };
+async function spToken(body){ const r = await fetch('https://accounts.spotify.com/api/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(Object.assign({ client_id: SPOTIFY_ID }, body)) }); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error_description || j.error || ('Spotify ' + r.status)); return j; }
+// back from Spotify's sign-in: swap the code for tokens and keep the long-lived one in your shared data
+async function spCallback(){ const q = new URLSearchParams(location.search); if (!q.get('code') && !q.get('error')) return; const pk = JSON.parse(localStorage.getItem('dj.sp.pkce') || 'null'); history.replaceState(null, '', location.pathname + '#songs'); route = { name: 'songs' };
+  if (q.get('error')) return toast('Spotify: ' + q.get('error')); if (!pk || pk.state !== q.get('state')) return toast('Spotify sign-in didn\'t match — try Connect again');
+  try { const t = await spToken({ grant_type: 'authorization_code', code: q.get('code'), redirect_uri: spRedirect(), code_verifier: pk.v }); localStorage.removeItem('dj.sp.pkce'); localStorage.setItem('dj.sp.tok', JSON.stringify({ t: t.access_token, exp: Date.now() + (t.expires_in - 60) * 1000 }));
+    const me = await spApi('GET', '/me', null, t.access_token); const d = Object.assign({}, spDoc() || {}, { id: 'spotify', refresh: t.refresh_token, spUser: me.id, name: me.display_name || me.id, by: (D.me() || {}).id, at: Date.now() }); await Store.put('spotify', d); toast('Spotify connected'); }
+  catch (e) { toast(/not registered|403/i.test(e.message) ? 'Spotify says this account isn\'t added yet — add it under User Management in the Spotify developer app' : 'Spotify: ' + e.message); } }
+async function spAccess(){ const c = JSON.parse(localStorage.getItem('dj.sp.tok') || 'null'); if (c && c.exp > Date.now()) return c.t; const d = spDoc(); if (!d || !d.refresh) throw new Error('not connected');
+  const t = await spToken({ grant_type: 'refresh_token', refresh_token: d.refresh }); localStorage.setItem('dj.sp.tok', JSON.stringify({ t: t.access_token, exp: Date.now() + (t.expires_in - 60) * 1000 })); if (t.refresh_token && t.refresh_token !== d.refresh) await Store.put('spotify', Object.assign({}, d, { refresh: t.refresh_token })); return t.access_token; }
+async function spApi(method, path, body, tok){ const r = await fetch('https://api.spotify.com/v1' + path, { method, headers: Object.assign({ Authorization: 'Bearer ' + (tok || await spAccess()) }, body ? { 'Content-Type': 'application/json' } : {}), body: body ? JSON.stringify(body) : undefined }); if (r.status === 204) return {}; const j = await r.json().catch(() => ({})); if (!r.ok) { const e = new Error((j.error && j.error.message) || ('Spotify ' + r.status)); e.status = r.status; throw e; } return j; }
+// make the playlist the first time; after that add only what isn't on it yet (never removes anything)
+ACT.spSync = async () => { const d = Object.assign({}, spDoc()); const uris = songUris(allSongs()); if (!uris.length) return toast('No Spotify songs in your memories yet');
+  try {
+    if (d.playlistId) { try { await spApi('GET', '/playlists/' + d.playlistId + '?fields=id'); } catch (e) { if (e.status === 404) { d.playlistId = ''; d.uris = []; } else throw e; } }
+    if (!d.playlistId) { const pl = await spApi('POST', '/users/' + encodeURIComponent(d.spUser) + '/playlists', { name: 'Our songs ♡', description: 'Every song from our memories — ' + D.users2().map(u => u.name).join(' & '), public: false, collaborative: true }); d.playlistId = pl.id; d.playlistUrl = (pl.external_urls || {}).spotify || ''; d.uris = []; }
+    const have = new Set(); let next = '/playlists/' + d.playlistId + '/tracks?fields=items(track(uri)),next&limit=100'; while (next) { const pg = await spApi('GET', next); (pg.items || []).forEach(it => it.track && have.add(it.track.uri)); next = pg.next ? pg.next.replace('https://api.spotify.com/v1', '') : null; }
+    const add = uris.filter(u => !have.has(u)); for (let i = 0; i < add.length; i += 100) await spApi('POST', '/playlists/' + d.playlistId + '/tracks', { uris: add.slice(i, i + 100) });
+    d.uris = Array.from(new Set([...(d.uris || []), ...uris])); d.syncedAt = Date.now(); await Store.put('spotify', d); toast(add.length ? `Added ${add.length} song${add.length === 1 ? '' : 's'} to “Our songs ♡”` : 'Already up to date ♡'); render(); }
+  catch (e) { toast(e.message === 'not connected' ? 'Connect Spotify first' : /not registered|403/i.test(e.message) ? 'Spotify: add this account under User Management in the developer app' : 'Spotify: ' + e.message); } };
+ACT.spDisconnect = async () => { if (!await ask('Disconnect Spotify?', { sub: 'The playlist stays in Spotify. You can connect again any time.', ok: 'Disconnect' })) return; const d = spDoc(); await Store.put('spotify', { id: 'spotify', playlistId: d && d.playlistId, playlistUrl: d && d.playlistUrl, uris: d && d.uris }); localStorage.removeItem('dj.sp.tok'); render(); };
+
+// ---------- V2.14: search ----------
+let searchQ = '';
+const norm = x => String(x || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+function snippet(text, q){ const t = String(text || ''); const i = norm(t).indexOf(q); if (i < 0) return esc(t.slice(0, 70)); const a = Math.max(0, i - 28), b = Math.min(t.length, i + q.length + 40); return (a ? '…' : '') + esc(t.slice(a, i)) + '<mark>' + esc(t.slice(i, i + q.length)) + '</mark>' + esc(t.slice(i + q.length, b)) + (b < t.length ? '…' : ''); }
+function searchResults(raw){ const q = norm(raw.trim()); if (q.length < 2) return '<div class="empty">Type at least two letters — a place, a song, a word from a note.</div>';
+  const groups = []; const me = D.me();
+  const mem = []; D.moments().forEach(m => { const t = D.trip(m.tripId); const fields = [m.text, m.title, m.note, m.place && (m.place.name || m.place.area), t && t.city]
+      .concat(D.songs(m).map(x => '♫ ' + [x.title, x.artist].filter(Boolean).join(' — ')), D.videos(m).map(x => '▶ ' + (x.title || '')), (m.photos || []).map(x => x.caption), D.costLines(m).map(c => c.label), D.notes(m.id).map(n => (n.by === me.id ? 'You' : (D.user(n.by) || {}).name) + ': ' + n.text));
+    const hit = fields.find(f => f && norm(f).includes(q)); if (hit) mem.push({ m, hit }); });
+  mem.sort((a, b) => b.m.date.localeCompare(a.m.date));
+  if (mem.length) groups.push(`<div class="l">Memories & plans · ${mem.length}</div><div class="list">${mem.slice(0, 40).map(({ m, hit }) => { const ph = (m.photos || [])[0]; const t = D.trip(m.tripId); return `<button class="row srow" data-go="day/${m.tripId || 'none'}_${m.date}">${ph ? `<span class="th" style="width:40px;height:40px"><img ${pvAttr(ph)} alt=""></span>` : `<span class="th" style="width:40px;height:40px;display:flex;align-items:center;justify-content:center">${m.kind === 'plan' ? '◷' : D.songs(m).length ? '♫' : '✎'}</span>`}<span style="flex:1;text-align:left;min-width:0"><div style="font-weight:500">${esc(m.text || m.title || 'Memory')}</div><div class="l">${snippet(hit, q)}</div><div class="l">${fmtD(m.date)} ${m.date.slice(0, 4)}${t ? ' · ' + esc(t.city) : ''}${m.kind === 'plan' ? ' · plan' : ''}</div></span></button>`; }).join('')}</div>`);
+  const trips = D.trips().filter(t => norm(t.city).includes(q)); if (trips.length) groups.push(`<div class="l">Trips</div><div class="list">${trips.map(t => `<button class="row" data-go="trip/${t.id}"><span>${snippet(t.city, q)}</span><span class="l">${fmtD(t.start)} – ${fmtD(t.end)} ${t.start.slice(0, 4)}</span></button>`).join('')}</div>`);
+  const lis = D.listItems().filter(i => norm(i.text + ' ' + (i.note || '') + ' ' + (i.city || '')).includes(q)); if (lis.length) groups.push(`<div class="l">Lists</div><div class="list">${lis.map(i => `<button class="row" data-go="list/${i.list}"><span style="text-align:left">${i.done ? '✓ ' : ''}${snippet(i.text + (i.note ? ' — ' + i.note : ''), q)}</span><span class="l">${esc((D.lists().find(l => l.key === i.list) || {}).label || '')}</span></button>`).join('')}</div>`);
+  const chat = D.bubbles().filter(b => !b.auto && b.text && norm(b.text).includes(q)).sort((a, b) => b.at - a.at); if (chat.length) groups.push(`<div class="l">Chat · ${chat.length}</div><div class="list">${chat.slice(0, 30).map(b => `<button class="row" data-act="searchChat|${b.id}"><span style="display:flex;gap:8px;align-items:center;text-align:left">${palOf(b.userId)}<span>${snippet(b.text, q)}</span></span><span class="l">${fmtD(isoDate(new Date(b.at)))}</span></button>`).join('')}</div>`);
+  return groups.join('') || `<div class="empty">Nothing for “${esc(raw.trim())}”.</div>`; }
+function renderSearch(app){
+  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="memories">‹ Memories</button><span>Search</span></div><input class="in" id="sq" placeholder="Search memories, notes, songs, places, lists, chat" value="${esc(searchQ)}" autocomplete="off" enterkeyhint="search"><div id="sr" class="sres">${searchResults(searchQ)}</div></div>${nav('memories')}`;
+  const inp = $('#sq'); let tm = null; inp.oninput = () => { searchQ = inp.value; clearTimeout(tm); tm = setTimeout(() => { const r = $('#sr'); if (r) { r.innerHTML = searchResults(searchQ); bind(r); } }, 120); }; if (!searchQ) setTimeout(() => inp.focus(), 50);
+}
+ACT.searchChat = id => { go('chat'); setTimeout(() => { const el = [...document.querySelectorAll('.msg')].find(x => x.dataset.id === id); if (el) { el.scrollIntoView({ block: 'center' }); el.classList.add('flash'); } }, 150); };
+
+// ---------- V2.14: storage meter ----------
+const FREE_BYTES = 1024 ** 3;   // Supabase free plan: 1 GB of files
+const mb = n => n >= 1024 ** 3 ? (n / 1024 ** 3).toFixed(2) + ' GB' : n >= 1048576 ? Math.round(n / 1048576) + ' MB' : Math.round(n / 1024) + ' KB';
+ACT.storageSheet = async () => { openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Storage</span></div><h2 class="hd md" style="margin:0">Storage</h2><div class="l" id="st-body">Counting…</div>`);
+  let u; try { u = await Store.usage(); } catch (e) { const el = $('#st-body'); if (el) el.textContent = 'Couldn\'t count right now — try again with signal.'; return; } const el = $('#st-body'); if (!el) return; const pct = Math.min(100, u.total / FREE_BYTES * 100);
+  el.outerHTML = `<div class="glass"><div class="row"><span class="num" style="font-size:26px">${mb(u.total)}</span><span class="l">of 1 GB free</span></div><div class="mbar big ${pct > 90 ? 'over' : pct > 75 ? 'near' : ''}" style="margin-top:10px"><i style="width:${pct}%"></i></div><div class="l" style="margin-top:6px">${Math.round(pct)}% used · ${u.count} files${u.source === 'phone' ? ' on this phone' : ''}</div></div>
+    <div class="list" style="font-size:13.5px">${[['photos', 'Photos'], ['videos', 'Videos'], ['voice', 'Voice notes & audio'], ['files', 'Tickets, receipts, other']].map(([k, l]) => `<div class="row"><span>${l}</span><span class="l">${mb(u[k])}</span></div>`).join('')}</div>
+    <div class="sub" style="text-align:left">${pct > 75 ? 'Getting full. Deleting a few long videos frees the most space; Supabase\'s Pro plan has 100 GB.' : 'Videos take the most room — a minute can be 50 MB, about 150 photos.'}</div>`; };
+
 // ---------- What's new (shown once per phone after an update; Profile → What's new replays it) ----------
-const APP_VERSION = '2.13'; const WN_VERSIONS = ['2.10', '2.11', '2.12', '2.13'];
+const APP_VERSION = '2.14'; const WN_VERSIONS = ['2.10', '2.11', '2.12', '2.13', '2.14'];
 let wnIdx = 0, wnForce = false;
 function needsWhatsNew(){ if (window.DJ_SKIP_WHATSNEW && !wnForce) return false; if (wnForce) return true; try { return localStorage.getItem('dj.seenVer') !== APP_VERSION; } catch (e) { return false; } }
 function markWhatsNewSeen(){ try { localStorage.setItem('dj.seenVer', APP_VERSION); } catch (e) {} }
@@ -1966,7 +2120,17 @@ function whatsNewCards(){ const [a, b] = D.users2(); const o = D.other() || b ||
     ['Cycle', `Your cycle, with the science: which phase you're in (menstrual, follicular, ovulation, luteal), what the hormones are doing, how you might feel and what helps. Predictions come from past periods and get better with every one logged. You both see the day, the phase and the tracker — it's on Home.`,
       `<div class="mini" style="display:flex;flex-direction:column;align-items:center"><svg viewBox="0 0 120 120" style="width:120px;height:120px"><circle r="48" cx="60" cy="60" fill="none" stroke="#E0607E" stroke-width="10" stroke-dasharray="40 400" transform="rotate(-90 60 60)"/><circle r="48" cx="60" cy="60" fill="none" stroke="#E9B872" stroke-width="10" stroke-dasharray="85 400" stroke-dashoffset="-42" transform="rotate(-90 60 60)"/><circle r="48" cx="60" cy="60" fill="none" stroke="#7FB98F" stroke-width="10" stroke-dasharray="25 400" stroke-dashoffset="-129" transform="rotate(-90 60 60)"/><circle r="48" cx="60" cy="60" fill="none" stroke="#9C86C4" stroke-width="10" stroke-dasharray="145 400" stroke-dashoffset="-156" transform="rotate(-90 60 60)"/></svg><div class="l">day 7 · Follicular</div></div>`],
   ].map(c => c.concat('2.13'));
-  return v213.concat(v212).concat(v211).concat([
+  const v214 = [
+    ['Photos, like Photos', `Swipe between photos smoothly. Pinch or double-tap to zoom, drag around while zoomed, tap to hide everything but the photo, swipe down to close.`,
+      `<div class="mini" style="display:flex;justify-content:center;gap:8px"><div style="width:120px;height:150px;border-radius:12px;background:linear-gradient(160deg,#F2D3B3,#C98F7A);display:flex;align-items:center;justify-content:center;color:#fff;font-size:28px">⤢</div><div style="width:50px;height:150px;border-radius:12px;background:linear-gradient(160deg,#8E6A7E,#4E3B57);opacity:.6"></div></div>`],
+    ['Videos', `Add videos to memories and send them in chat — they play right there. Up to 50 MB each (about 30–60 seconds). Profile → Storage shows how full your free space is.`,
+      `<div class="mini" style="display:flex;justify-content:center"><div style="position:relative;width:200px;height:120px;border-radius:14px;background:linear-gradient(160deg,#B9D3C9,#6F9C8E)"><i class="vbadge" style="font-size:13px">▶ 0:24</i></div></div>`],
+    ['Search, and back where you were', `Memories → ⌕ Search finds anything: a place, a song, a word from a note, a list item, something said in chat. And going back (‹, a tab, or swiping from the left edge) lands where you'd scrolled to.`,
+      `<div class="mini"><div class="in" style="font-size:14px;color:var(--mu)">⌕ ramen</div><div class="l" style="margin-top:10px">Ramen after · <mark style="background:#F6E39A">ramen</mark> at Kinton</div></div>`],
+    ['Our songs → Spotify', `Our songs has a button that makes a Spotify playlist of every song from your memories — and after that, “Update playlist” adds only the new ones. Importing photos also skips any that are already in the app.`,
+      `<div class="mini"><div class="row"><span style="font-weight:500">Our songs ♡ on Spotify</span><span class="l">12 songs</span></div><div class="btn sm" style="margin-top:10px;text-align:center">Update playlist · 3 new</div></div>`],
+  ].map(c => c.concat('2.14'));
+  return v214.concat(v213).concat(v212).concat(v211).concat([
     ['Chat, with photos', `Chat has its own typing box now. Send messages, 💭 thoughts, photos and stickers — photos stay, and you can save them to your phone. You can also send a photo from your pal on Home.`,
       `<div class="mini" style="display:flex;flex-direction:column;gap:8px">${msg(o, `<div class="b">look where we ate 😭</div>`)}${msg(o, `<div class="cph" style="width:130px;height:96px;background:linear-gradient(135deg,#E9C9A8,#C98F7A)"></div>`)}${msg(me, `<div class="b">going back tomorrow</div>`, true)}<div class="composer" style="margin-top:4px"><span class="cbtn">◫</span><span class="cbtn">☺</span><span class="in" style="color:var(--mu);font-size:14px">say something</span><span class="btn sm">Send</span></div></div>`],
     ['Your own stickers', `Make stickers out of your photos: in Photos, press and hold one of you until it lifts out, tap <b>Copy</b>, then <b>Paste</b> here. They're shared — use them on photos and in chat. Hold one to remove it.`,
@@ -1982,16 +2146,26 @@ function whatsNewCards(){ const [a, b] = D.users2(); const o = D.other() || b ||
   ].map(c => c.concat('2.10'))).filter(c => wnForce || WN_VERSIONS.indexOf(c[3]) > WN_VERSIONS.indexOf(localStorage.getItem('dj.seenVer') || '')); }
 function renderWhatsNew(app){
   const cards = whatsNewCards(); if (!cards.length) { markWhatsNewSeen(); wnForce = false; return (route.name === 'home' ? renderHome : renderHome)(app); } const i = Math.min(wnIdx, cards.length - 1); const [title, body, fig] = cards[i]; const last = i === cards.length - 1;
-  app.innerHTML = `<div class="screen tut wn"><div class="bar"><span>What's new · ${MONTHS[new Date().getMonth()]} update</span>${!last ? '<button data-act="wnDone">Skip</button>' : '<span></span>'}</div>${fig}<div style="margin-top:auto"><div class="hd md">${title}</div><p>${body}</p></div><div class="row" style="margin-top:14px"><div class="dots">${cards.map((_, j) => `<i class="${j === i ? 'on' : ''}"></i>`).join('')}</div><span style="display:flex;gap:6px">${i ? '<button class="btn sm lite" data-act="wnNav|-1">Back</button>' : ''}<button class="btn sm" data-act="${last ? 'wnDone' : 'wnNav|1'}">${last ? 'Got it' : 'Next'}</button></span></div></div>`;
+  app.innerHTML = `<div class="wnov wn"><div class="bar"><span>What's new · ${MONTHS[new Date().getMonth()]} update</span>${!last ? '<button data-act="wnDone">Skip</button>' : '<span></span>'}</div><div class="wnfig"><div class="wnfit">${fig}</div></div><div class="wntext"><div class="hd md">${title}</div><p>${body}</p></div><div class="row" style="margin-top:14px"><div class="dots">${cards.map((_, j) => `<i class="${j === i ? 'on' : ''}"></i>`).join('')}</div><span style="display:flex;gap:6px">${i ? '<button class="btn sm lite" data-act="wnNav|-1">Back</button>' : ''}<button class="btn sm" data-act="${last ? 'wnDone' : 'wnNav|1'}">${last ? 'Got it' : 'Next'}</button></span></div></div>`;
+  // shrink the picture to whatever room is left, so the card always fits the screen
+  const fitWn = () => { const box = app.querySelector('.wnfig'), inner = app.querySelector('.wnfit'); if (!box || !inner) return; inner.style.transform = ''; const s = Math.min(1, box.clientWidth / Math.max(1, inner.scrollWidth), box.clientHeight / Math.max(1, inner.scrollHeight)); inner.style.transform = `scale(${s})`; };
+  fitWn(); requestAnimationFrame(fitWn); window.removeEventListener('resize', renderWhatsNew.fit || (() => {})); renderWhatsNew.fit = fitWn; window.addEventListener('resize', fitWn);
   let x0 = null; const el = app.querySelector('.wn'); el.addEventListener('touchstart', e => { x0 = e.touches[0].clientX; }, { passive: true }); el.addEventListener('touchend', e => { if (x0 == null) return; const dx = e.changedTouches[0].clientX - x0; x0 = null; if (Math.abs(dx) > 50) { const n = wnIdx + (dx < 0 ? 1 : -1); if (n >= 0 && n < cards.length) { wnIdx = n; render(); } } });
 }
 ACT.wnNav = d => { wnIdx = Math.max(0, wnIdx + +d); render(); };
-ACT.wnDone = () => { wnIdx = 0; wnForce = false; markWhatsNewSeen(); render(); window.scrollTo(0, 0); };
+ACT.wnDone = () => { wnIdx = 0; wnForce = false; markWhatsNewSeen(); if (route.name === 'whatsnew') return go('home'); render(); window.scrollTo(0, 0); };
 ACT.whatsNew = () => { wnIdx = 0; wnForce = true; render(); window.scrollTo(0, 0); };
 
 // ---------- boot ----------
-window.addEventListener('hashchange', () => { const [n, id] = location.hash.slice(1).split('/'); if (n && n !== route.name || id !== route.id) { route = { name: n || 'home', id }; render(); } });
+window.addEventListener('hashchange', () => { const [n, id] = location.hash.slice(1).split('/'); if (n && n !== route.name || id !== route.id) { const next = { name: n || 'home', id }; const y = navTo(next); route = next; render(true); restoreScroll(y); } });
+// swipe in from the left edge to go back (the page follows your finger; let go past a third and it goes back)
+(() => { let sx = null, sy = 0, dx = 0, on = false, t0 = 0; const app = () => $('#app'); const reset = () => { const a = app(); a.style.transition = 'transform .22s ease-out'; a.style.transform = ''; setTimeout(() => { a.style.transition = ''; a.classList.remove('swiping'); }, 230); sx = null; on = false; };
+  document.addEventListener('touchstart', e => { if (sheet || e.touches.length > 1 || e.touches[0].clientX > 24 || !backRoute()) { sx = null; return; } sx = e.touches[0].clientX; sy = e.touches[0].clientY; dx = 0; on = false; t0 = Date.now(); }, { passive: true });
+  document.addEventListener('touchmove', e => { if (sx == null) return; const t = e.touches[0]; dx = t.clientX - sx; const dy = t.clientY - sy; if (!on) { if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) { sx = null; return; } if (dx > 10) { on = true; app().classList.add('swiping'); } } if (on) { e.preventDefault(); app().style.transform = `translateX(${Math.max(0, dx)}px)`; } }, { passive: false });
+  document.addEventListener('touchend', () => { if (sx == null) return; if (!on) { sx = null; return; } const fast = dx > 60 && Date.now() - t0 < 250; if (dx > window.innerWidth / 3 || fast) { const a = app(); a.style.transition = 'transform .16s ease-out'; a.style.transform = `translateX(${window.innerWidth}px)`; setTimeout(() => { a.style.transition = ''; a.style.transform = ''; a.classList.remove('swiping'); const r = backRoute(); if (r) go(r.name, r.id ? { id: r.id } : null); }, 160); sx = null; on = false; } else reset(); });
+  document.addEventListener('touchcancel', () => { if (sx != null && on) reset(); sx = null; });
+})();
 Store.onChange(() => { if (viewer) drawViewer(true); else if (!sheet) render(); });
-Store.ready = Store.connect(CFG).then(() => { const [n, id] = location.hash.slice(1).split('/'); route = { name: n || 'home', id }; render(); setInterval(applySky, 60000); syncIcs(false); checkPush(); setInterval(() => syncIcs(false), 3600000); if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(()=>{}); });
-window.DJ = { D, go, ACT, render, parseConfirmation, skyMode, Store, imp: () => imp, pdfText, storePhoto };
+Store.ready = Store.connect(CFG).then(async () => { const [n, id] = location.hash.slice(1).split('/'); route = { name: n || 'home', id }; render(); await spCallback().catch(() => {}); if (route.name === 'songs') render(); setInterval(applySky, 60000); syncIcs(false); checkPush(); setInterval(() => syncIcs(false), 3600000); if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(()=>{}); });
+window.DJ = { D, go, ACT, render, parseConfirmation, skyMode, Store, imp: () => imp, pdfText, storePhoto, navStack: () => navStack };
 })();
