@@ -165,3 +165,9 @@ Two evenings of feedback rounds on real screens produced V2:
 - Nudge: if there's no ✓ 45 minutes later, one more gentle notification ("Still time ♡").
 - Skip days we're together: weekday reminders don't go on trip days.
 - The notify function now runs every minute so reminders land on time (trips, flights, birthdays and the 23rd still check every 5 minutes). A reminder set after today's time starts tomorrow; changing the time lets it go again today.
+
+- (V2.16.1) Updates arrive by themselves: iPhone keeps a Home Screen app running, so after a deploy (and when tapping the update notification) the old version kept showing. Now the app checks app/version.json whenever it opens or comes back and reloads into the new version — or, if you're mid-way through something (a sheet, typing, an import), shows "New version ready — tap to update". APP_BUILD in app.js must match version.json.
+
+## V2.17 (drop them in)
+- On the laptop, drag photos and videos from Finder or Photos onto the app. Where you drop decides: an open memory → added to it (long videos still get "Choose the part"); Chat → sent; a day → one memory on that day, or sorted into days (asks when there are several); a trip (or its Budget/Photos/Days) → Import for that trip; the Import review → added to it; anywhere else → Import, sorted into whichever trips and days they fit. A card shows where they'll go while you drag; other files are skipped with a note.
+- ⌘V pastes a copied photo or screenshot the same way; pasting text works as before.

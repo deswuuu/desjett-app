@@ -2400,7 +2400,24 @@ ACT.storageSheet = async () => { openSheet(`<div class="bar"><button data-act="c
     <div class="sub" style="text-align:left">${pct > 75 ? 'Getting full. Deleting a few long videos frees the most space; Supabase\'s Pro plan has 100 GB.' : 'Videos take the most room — a minute can be 50 MB, about 150 photos.'}</div>`; };
 
 // ---------- What's new (shown once per phone after an update; Profile → What's new replays it) ----------
-const APP_VERSION = '2.16'; const WN_VERSIONS = ['2.10', '2.11', '2.12', '2.13', '2.14', '2.15', '2.16'];
+const APP_VERSION = '2.17'; const WN_VERSIONS = ['2.10', '2.11', '2.12', '2.13', '2.14', '2.15', '2.16', '2.17'];
+// V2.16.1: a new version was deployed while the app was open (iPhone keeps Home Screen apps running, so a tapped
+// notification brings back the old page). Each time the app opens or comes back, check version.json and reload into
+// the new one — unless you're in the middle of something, then offer it. APP_BUILD must match app/version.json.
+const APP_BUILD = '2.17';
+const verNewer = (a, b) => { const x = String(a || '').split('.').map(n => +n || 0), y = String(b || '').split('.').map(n => +n || 0); for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
+async function checkUpdate(){
+  if (!location.protocol.startsWith('http')) return;
+  try { const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' }); if (!r.ok) return; const v = await r.json(); if (!v || !verNewer(v.version, APP_BUILD)) return;
+    let tried = ''; try { tried = sessionStorage.getItem('dj.updTried') || ''; } catch (e) {} if (tried === v.version) return;
+    const reload = async () => { try { sessionStorage.setItem('dj.updTried', v.version); } catch (e) {} try { const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration(); if (reg) await reg.update(); } catch (e) {} location.reload(); };
+    const a = document.activeElement; const busy = $('.sheet') || $('.trimov') || $('.askbox') || imp || (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName));
+    if (!busy) return reload();
+    if ($('.updbar')) return; const bar = document.createElement('button'); bar.className = 'updbar'; bar.textContent = 'New version ready — tap to update ♡'; bar.onclick = reload; document.body.appendChild(bar);
+  } catch (e) {} }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkUpdate(); });
+window.addEventListener('pageshow', e => { if (e.persisted) checkUpdate(); });
+setTimeout(checkUpdate, 2500);
 let wnIdx = 0, wnForce = false;
 function needsWhatsNew(){ if (window.DJ_SKIP_WHATSNEW && !wnForce) return false; if (wnForce) return true; try { return localStorage.getItem('dj.seenVer') !== APP_VERSION; } catch (e) { return false; } }
 function markWhatsNewSeen(){ try { localStorage.setItem('dj.seenVer', APP_VERSION); } catch (e) {} }
@@ -2453,7 +2470,11 @@ function whatsNewCards(){ const [a, b] = D.users2(); const o = D.other() || b ||
     ['Reminders', `Set a notification for each other — or yourself — at a time you choose: “Eat lunch 🍱” every weekday at 12:30, in his own time zone. Tap it to ✓ when it's done, and the other person sees it on Home. No ✓ after 45 minutes? One more gentle nudge. Days you're together can be skipped. + on Home → Set a reminder, or Profile → Reminders.`,
       `<div class="mini"><div class="row" style="font-size:12px"><span class="l">Reminders today</span><span class="l">›</span></div><div class="row remrow"><span class="remtx"><i class="pal puppy"></i><span>Eat lunch 🍱</span></span><span class="remok">✓ 12:41pm</span></div><div class="row remrow"><span class="remtx"><i class="pal bunny"></i><span>Vitamins</span></span><span class="btn sm">✓ Done</span></div></div>`],
   ].map(c => c.concat('2.16'));
-  return v216.concat(v215).concat(v214).concat(v213).concat(v212).concat(v211).concat([
+  const v217 = [
+    ['Drop them in', `On the laptop, drag photos and videos straight from Finder or Photos onto the app. On a trip they're sorted into its days; on a day, add them as one memory or sort them; into an open memory, they're added to it; in Chat, they're sent. ⌘V pastes a copied photo or screenshot the same way.`,
+      `<div class="mini" style="display:flex;justify-content:center"><div class="dropcard" style="font-size:14px;padding:20px 14px;box-shadow:none;width:100%"><div class="dropic" style="width:40px;height:40px;font-size:20px">＋</div><div>Drop to add to Toronto ♡</div><div class="l">photos & videos</div></div></div>`],
+  ].map(c => c.concat('2.17'));
+  return v217.concat(v216).concat(v215).concat(v214).concat(v213).concat(v212).concat(v211).concat([
     ['Chat, with photos', `Chat has its own typing box now. Send messages, 💭 thoughts, photos and stickers — photos stay, and you can save them to your phone. You can also send a photo from your pal on Home.`,
       `<div class="mini" style="display:flex;flex-direction:column;gap:8px">${msg(o, `<div class="b">look where we ate 😭</div>`)}${msg(o, `<div class="cph" style="width:130px;height:96px;background:linear-gradient(135deg,#E9C9A8,#C98F7A)"></div>`)}${msg(me, `<div class="b">going back tomorrow</div>`, true)}<div class="composer" style="margin-top:4px"><span class="cbtn">◫</span><span class="cbtn">☺</span><span class="in" style="color:var(--mu);font-size:14px">say something</span><span class="btn sm">Send</span></div></div>`],
     ['Your own stickers', `Make stickers out of your photos: in Photos, press and hold one of you until it lifts out, tap <b>Copy</b>, then <b>Paste</b> here. They're shared — use them on photos and in chat. Hold one to remove it.`,
@@ -2490,5 +2511,52 @@ window.addEventListener('hashchange', () => { const [n, id] = location.hash.slic
 })();
 Store.onChange(() => { if (viewer) drawViewer(true); else if (!sheet) render(); });
 Store.ready = Store.connect(CFG).then(async () => { const [n, id] = location.hash.slice(1).split('/'); route = { name: n || 'home', id }; render(); await spCallback().catch(() => {}); if (route.name === 'songs') render(); setInterval(applySky, 60000); syncIcs(false); checkPush(); setInterval(() => syncIcs(false), 3600000); if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(()=>{}); });
-window.DJ = { D, go, ACT, render, parseConfirmation, skyMode, Store, imp: () => imp, readVideoMeta, mp4Index, mp4Cut, mp4Pick, fitVideo, pdfText, storePhoto, navStack: () => navStack };
+// ---------- V2.17: drag photos & videos in from the laptop (and ⌘V to paste) ----------
+// Where you drop decides what happens: an open memory → added to it; chat → sent; a day → one memory on that day or
+// sorted into days; a trip → Import for that trip; anywhere else → Import, sorted into whichever trips and days they fit.
+const mediaOf = list => Array.from(list || []).filter(f => /^(image|video)\//.test(f.type) || /\.(jpe?g|png|heic|heif|gif|webp|mov|mp4|m4v|webm)$/i.test(f.name || ''));
+const fakeInput = files => ({ files, value: '' });
+function dropTarget(){
+  if ($('.trimov') || $('.askbox')) return null;
+  const sh = $('.sheet');
+  if (sh) { if (sh.querySelector('#m-file')) return { k: 'memory', label: 'Drop to add to this memory' }; if (sh.querySelector('#bub-file')) return { k: 'bubble', label: 'Drop to send' }; return null; }
+  const n = route.name, id = route.id || '';
+  if (n === 'chat') return { k: 'chat', label: 'Drop to send in chat' };
+  if (n === 'import' && imp && imp.stage === 'review') return { k: 'more', label: 'Drop to add these too' };
+  if (n === 'day') { const i = id.lastIndexOf('_'); const tripId = id.slice(0, i), date = id.slice(i + 1); return { k: 'day', tripId: tripId === 'none' ? '' : tripId, date, label: 'Drop to add to ' + fmtDow(date) + ' ' + MON[parseDate(date).getMonth()] }; }
+  if (['trip', 'days', 'budget', 'photos'].includes(n) && D.trip(id)) return { k: 'trip', tripId: id, label: 'Drop to add to ' + D.trip(id).city + ' ♡' };
+  if (n === 'import' && imp && imp.stage !== 'review') return null;
+  return { k: 'any', label: 'Drop to sort into your trips & days' };
+}
+async function takeFiles(files, how){
+  const all = Array.from(files || []); const media = mediaOf(all); const skipped = all.length - media.length;
+  if (!media.length) return toast(skipped ? 'Only photos and videos can go in' : 'Nothing to add');
+  if (skipped) toast(skipped === 1 ? '1 file skipped — only photos and videos' : skipped + ' files skipped — only photos and videos');
+  const t = how || dropTarget(); if (!t) return toast('Close this first, then drop them in');
+  if (t.k === 'memory') return ACT.mFiles(null, fakeInput(media));
+  if (t.k === 'bubble') return ACT.bubFiles(null, fakeInput(media));
+  if (t.k === 'chat') return ACT.chatFiles(null, fakeInput(media));
+  if (t.k === 'more') return importRead(imp.tripId, media, true);
+  if (t.k === 'trip') return importRead(t.tripId, media);
+  if (t.k === 'day') {
+    const one = media.length === 1 || await ask(media.length + ' photos & videos', { sub: 'Add them as one memory on ' + fmtDow(t.date) + ' ' + MON[parseDate(t.date).getMonth()] + ', or sort them into days and moments by when they were taken?', ok: 'One memory', no: 'Sort into days' });
+    if (one) { ACT.newMoment((t.tripId || '') + ',' + t.date); return ACT.mFiles(null, fakeInput(media)); }
+    return importRead(t.tripId, media);
+  }
+  return importRead('', media);
+}
+(() => {
+  let depth = 0, ov = null, tgt = null;
+  const hasFiles = e => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+  const show = () => { tgt = dropTarget(); if (!ov) { ov = document.createElement('div'); ov.className = 'dropov'; document.body.appendChild(ov); } ov.innerHTML = `<div class="dropcard ${tgt ? '' : 'no'}"><div class="dropic">${tgt ? '＋' : '–'}</div><div>${esc(tgt ? tgt.label : 'Close this first, then drop them in')}</div><div class="l">photos & videos</div></div>`; };
+  const hide = () => { depth = 0; if (ov) { ov.remove(); ov = null; } };
+  document.addEventListener('dragenter', e => { if (!hasFiles(e)) return; e.preventDefault(); if (depth++ === 0) show(); });
+  document.addEventListener('dragover', e => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = tgt ? 'copy' : 'none'; });
+  document.addEventListener('dragleave', e => { if (!hasFiles(e)) return; if (--depth <= 0) hide(); });
+  document.addEventListener('drop', e => { if (!hasFiles(e)) return; e.preventDefault(); const t = tgt; hide(); if (t) takeFiles(e.dataTransfer.files, t); else toast('Close this first, then drop them in'); });
+  // ⌘V / Ctrl+V a copied photo (or a screenshot): same places as dropping. Text pastes as usual.
+  document.addEventListener('paste', e => { const cd = e.clipboardData; if (!cd) return; const files = mediaOf(Array.from(cd.files || []).length ? cd.files : Array.from(cd.items || []).filter(i => i.kind === 'file').map(i => i.getAsFile()).filter(Boolean)); if (!files.length) return;
+    const t = dropTarget(); if (!t) return; e.preventDefault(); const named = files.map((f, i) => f.name && f.name !== 'image.png' ? f : new File([f], 'pasted-' + Date.now() + '-' + i + '.' + ((f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')), { type: f.type, lastModified: Date.now() })); takeFiles(named, t); });
+})();
+window.DJ = { takeFiles, dropTarget, D, go, ACT, render, parseConfirmation, skyMode, Store, imp: () => imp, readVideoMeta, mp4Index, mp4Cut, mp4Pick, fitVideo, pdfText, storePhoto, navStack: () => navStack };
 })();
