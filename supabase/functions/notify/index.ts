@@ -1,7 +1,7 @@
 // Des & Jett — notifications. A Supabase Edge Function.
 // Called two ways, both with the x-notify-secret header:
 //   1. by a database trigger when something changes  -> { type:'change', op, collection, record, old }
-//   2. by a scheduled job every 15 minutes            -> { type:'tick' }
+//   2. by a scheduled job every minute               -> { type:'tick' }   (your reminders every minute; trips, flights, birthdays every 5)
 // It never tells you about your own actions, never mentions anything hidden, and each
 // reminder is sent once (remembered as a small "pushlog" record).
 import webpush from 'npm:web-push@3.6.7';
@@ -81,15 +81,35 @@ async function onChange(b) {
   return { sent: ctx.sent };
 }
 
-// ---------- 2. every 15 minutes: reminders ----------
+// ---------- 2. every minute: your reminders; every 5 minutes: trips, flights, birthdays, the 23rd ----------
 async function tick(nowOverride) {
-  const now = nowOverride || Date.now();
-  const [users, subs, settingsL, trips, bookings, presents, logRows] = await Promise.all([coll('users'), coll('push'), coll('settings'), coll('trips'), q(`select=id,data&collection=eq.moments&data->>kind=eq.booking`).then(rs => rs.map(r => Object.assign({ id: r.id }, r.data))), coll('presents'), q(`select=id&collection=eq.pushlog&updated_at=gt.${new Date(now - 20 * 864e5).toISOString()}`)]);
+  const now = nowOverride || Date.now(); const full = !!nowOverride || new Date(now).getUTCMinutes() % 5 === 0;
+  const none = Promise.resolve([]);
+  const [users, subs, trips, rems, logRows, settingsL, bookings, presents] = await Promise.all([coll('users'), coll('push'), coll('trips'), coll('reminders'), q(`select=id&collection=eq.pushlog&updated_at=gt.${new Date(now - 20 * 864e5).toISOString()}`),
+    full ? coll('settings') : none, full ? q(`select=id,data&collection=eq.moments&data->>kind=eq.booking`).then(rs => rs.map(r => Object.assign({ id: r.id }, r.data))) : none, full ? coll('presents') : none]);
   const ctx = makeCtx(users, subs); const settings = settingsL.find(s => s.id === 'settings') || settingsL[0] || {};
   const done = new Set(logRows.map(r => r.id)); const log = [];
   const once = async (key, fn) => { const id = 'pl_' + key; if (done.has(id)) return; await fn(); done.add(id); log.push({ id, collection: 'pushlog', data: { id, at: now }, updated_at: new Date(now).toISOString() }); };
   const trips2 = trips.filter(t => !t.occasion);
-  for (const u of users) {
+  // reminders you set for each other (or yourselves): on time in that person's own time zone, once a day each;
+  // with a ✓ check-in, one more nudge 45 minutes later if there's no ✓; optionally skipped on days you're together
+  if (rems.length) {
+    const ticked = new Set((await q(`select=id&collection=eq.rdone&updated_at=gt.${new Date(now - 3 * 864e5).toISOString()}`)).map(r => r.id));
+    for (const r of rems) { const t0 = hm(r.time); if (r.paused || !r.text || !t0) continue;
+      for (const uid of r.for === 'both' ? users.map(u => u.id) : [r.for]) {
+        const u = users.find(x => x.id === uid); if (!u || !subs.some(s => s.userId === uid)) continue;
+        const L = parts(u.tz, now); const dow = new Date(L.date + 'T12:00:00Z').getUTCDay();
+        if (r.once ? r.once !== L.date : !(r.days || []).includes(dow)) continue;
+        if (!r.once && r.together && trips2.some(t => L.date >= t.start && L.date <= t.end)) continue;
+        const due = zoned(L.date, t0[0], t0[1], u.tz); if (due < (r.since || r.createdAt || 0) - 60000) continue;   // set after today's time: starts tomorrow
+        const mins = (now - due) / 60000; const from = r.by && r.by !== uid ? name(ctx, r.by) : '';
+        const key = `rem_${r.id}_${uid}_${L.date}_${r.time}`;
+        if (mins >= 0 && mins < 30) await once(key, () => send(ctx, uid, { title: r.text, body: (from ? 'from ' + from + ' ♡' : 'Reminder') + (r.checkin ? ' · tap when it’s done' : ''), url: '#rem/' + r.id, tag: 'rem-' + r.id }));
+        else if (r.checkin && r.nudge && mins >= 45 && mins < 90 && done.has('pl_' + key) && !ticked.has(`rd_${r.id}_${uid}_${L.date}`))
+          await once(key + '_n', () => send(ctx, uid, { title: r.text, body: 'Still time ♡' + (from ? ' — ' + from : '') + ' · tap when it’s done', url: '#rem/' + r.id, tag: 'rem-' + r.id }));
+      } }
+  }
+  if (full) for (const u of users) {
     if (!subs.some(s => s.userId === u.id)) continue;
     const L = parts(u.tz, now); const o = other(ctx, u.id);
     // the 23rd

@@ -595,3 +595,17 @@ ul.cyl{margin:6px 0 0;padding-left:18px;font-size:13px;line-height:1.55;color:va
 .trimuse{background:#F6E39A;color:#2a2410}.trimuse:disabled{opacity:.45}
 .trimov.trimbusy .trimtrack,.trimov.trimbusy .trimmode{pointer-events:none;opacity:.6}
 .ph.big img,.ph.big .vph{opacity:.55}.trimbadge{position:absolute;right:4px;bottom:4px;background:#F6E39A;color:#2a2410;font-size:10px;font-style:normal;font-weight:600;padding:2px 6px;border-radius:99px;pointer-events:none;z-index:1}
+
+/* V2.16: reminders */
+.rems{padding-top:6px;padding-bottom:6px}.rems>.row{padding:6px 0}
+.remrow{padding:9px 0;border-top:1px solid var(--ln);gap:10px}
+.remtx{display:flex;align-items:center;gap:8px;min-width:0;font-size:14px}.remtx span,.remtx b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.remtx b{font-weight:500}
+.remtx .pal{width:22px;height:22px;flex:none}
+.remok{font-size:12.5px;font-weight:500;color:#5E8B6F;white-space:nowrap}
+.remrow .btn.sm{padding:7px 12px;white-space:nowrap}
+.remcard{text-align:center;padding:40px 10px 20px;display:flex;flex-direction:column;align-items:center;gap:6px}.remcard .hd{margin-top:8px}
+.remdone{margin-top:22px;font-size:17px;font-weight:500;color:#5E8B6F}
+.remitem{display:block;width:100%;text-align:left;background:var(--glass);border:1px solid var(--edge);border-radius:20px;padding:14px 16px;backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px)}
+.remitem.paused{opacity:.55}
+.remdays{display:flex;gap:6px;justify-content:space-between;margin-top:10px}.remdays button{flex:1;aspect-ratio:1;max-width:40px;border-radius:50%;font-size:12.5px;font-weight:500;background:var(--glass2);border:1px solid var(--edge);color:var(--fg2)}.remdays button.on{background:var(--btn);color:var(--btnfg);border-color:var(--btn)}
+.lnk{text-decoration:underline;font:inherit;color:inherit;padding:0;background:none;border:0}

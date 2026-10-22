@@ -43,3 +43,16 @@ for an import instead of nothing.
 2. **Netlify → Site configuration → Notifications → Deploy notifications → Add notification → HTTP POST request**, event **Deploy succeeded**, URL:
    `https://YOUR-PROJECT-REF.supabase.co/functions/v1/notify?release=1&secret=YOUR-NOTIFY-SECRET`
 3. For each release, edit `app/version.json`: bump `version`, set `notify` to `true` for a build (and write the `title`/`body`), or `false` for a quiet fix. Each version is announced once, even if you redeploy.
+
+## Reminders (V2.16)
+1. **Edge Functions → notify**: paste the new `functions/notify/index.ts` and **Deploy**.
+2. **SQL Editor → New query**, run this (it changes the existing every-15-minutes job to every minute; same project ref and secret as before):
+   ```sql
+   select cron.schedule('dj-reminders', '* * * * *', $$
+     select net.http_post(
+       url := 'https://YOUR-PROJECT-REF.supabase.co/functions/v1/notify',
+       headers := jsonb_build_object('Content-Type','application/json','x-notify-secret','YOUR-NOTIFY-SECRET'),
+       body := '{"type":"tick"}'::jsonb
+     )
+   $$);
+   ```

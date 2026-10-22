@@ -150,7 +150,7 @@ function restoreScroll(y){ const tok = ++scrollTok; window.scrollTo(0, y); if (!
   const to = () => { if (tok === scrollTok && window.scrollY < y - 2) window.scrollTo(0, y); }; const stop = () => { if (tok === scrollTok) scrollTok++; }; window.addEventListener('touchmove', stop, { once: true, passive: true }); window.addEventListener('wheel', stop, { once: true, passive: true }); requestAnimationFrame(to); [120, 400, 900].forEach(ms => setTimeout(to, ms)); }
 function go(name, params){ const next = Object.assign({ name }, params||{}); const y = navTo(next); route = next; location.hash = '#' + name + (params && params.id ? '/' + params.id : ''); render(true); restoreScroll(y); }
 // "‹" on a page you can reach from several places goes back to wherever you came from (and your place there)
-const BACK_NAMES = { home: 'Home', trips: 'Trips', days: 'Days', calendar: 'Calendar', memories: 'Memories', search: 'Search', wall: 'Photos', photos: 'Photos', moments: 'Moments', songs: 'Our songs', map: 'Map', budget: 'Budget', cat: 'Budget', lists: 'Lists', list: 'List', chat: 'Chat', profile: 'Profile' };
+const BACK_NAMES = { reminders: 'Reminders', home: 'Home', trips: 'Trips', days: 'Days', calendar: 'Calendar', memories: 'Memories', search: 'Search', wall: 'Photos', photos: 'Photos', moments: 'Moments', songs: 'Our songs', map: 'Map', budget: 'Budget', cat: 'Budget', lists: 'Lists', list: 'List', chat: 'Chat', profile: 'Profile' };
 function backBtn(fallback, fallbackLabel){ const r = backRoute(); if (r && r.name !== route.name) { const t = r.name === 'trip' && r.id ? D.trip(r.id) : null; const label = t ? esc(t.city) : BACK_NAMES[r.name] || fallbackLabel; return `<button data-act="goBack|${fallback}">‹ ${label}</button>`; } return `<button data-go="${fallback}">‹ ${fallbackLabel}</button>`; }
 // the previous page, for the edge swipe
 function backRoute(){ const prev = navStack[navStack.length - 2]; if (!prev) return null; const [name, id] = prev.key.split('/'); return { name, id: id || undefined }; }
@@ -197,7 +197,7 @@ function render(nav){
   nav = nav === true; const y0 = window.scrollY; if (!nav) { app.style.minHeight = document.documentElement.scrollHeight + 'px'; clearTimeout(render.mh); render.mh = setTimeout(() => { app.style.minHeight = ''; }, 900); }
   if (!s.setup) return renderSetup(app);
   if (!D.me()) return renderWho(app);
-  const R = { notify: renderNotify, chat: renderChat, howto: renderHowto, gcal: renderGcal, cat: renderCategory, home: renderHome, trips: renderTrips, trip: renderTrip, days: renderDays, budget: renderBudget, photos: renderPhotos, day: renderDay, calendar: renderCalendar, profile: renderProfile, memories: renderMemories, between: renderBetween, emails: renderEmails, moments: renderMoments, lists: renderLists, list: renderList, wall: renderWall, search: renderSearch, money: renderMoney, cycle: renderCycle, songs: renderSongs, map: renderMap, import: renderImport };
+  const R = { notify: renderNotify, chat: renderChat, howto: renderHowto, gcal: renderGcal, cat: renderCategory, home: renderHome, trips: renderTrips, trip: renderTrip, days: renderDays, budget: renderBudget, photos: renderPhotos, day: renderDay, calendar: renderCalendar, profile: renderProfile, memories: renderMemories, between: renderBetween, emails: renderEmails, moments: renderMoments, lists: renderLists, list: renderList, wall: renderWall, search: renderSearch, money: renderMoney, cycle: renderCycle, songs: renderSongs, map: renderMap, import: renderImport, rem: renderRem, reminders: renderReminders };
   R.whatsnew = a => { wnForce = true; renderWhatsNew(a); };
   (needsWhatsNew() ? renderWhatsNew : (R[route.name] || renderHome))(app);
   bind(app); bindHold(app); updateBadge();
@@ -307,6 +307,7 @@ function renderHome(app){
     ${onThisDayHTML()}
     ${soon != null && soon >= 1 && soon <= 7 ? `<button class="glass pill row tap" style="display:flex" data-act="birthdaySheet|${other.id},${soonDate}"><span class="l">${esc(other.name)}'s birthday ${soon === 1 ? 'tomorrow' : 'in ' + soon + ' days'}</span><span style="font-size:13px;font-weight:500">${soonGift ? 'present wrapped ✓' : 'wrap a present ›'}</span></button>` : ''}
     <button class="glass pill row tap" style="display:flex" data-go="between"><span class="l">${MONTHS[now.getMonth()]} budget</span><span style="font-size:13px;font-weight:500">${money(D.envelopeMonthly())}</span></button>
+    ${remHomeHTML()}
     ${cycleHomeHTML()}
     <button class="glass pill row tap" style="display:flex" data-go="lists"><span class="l">Things to do together</span><span style="font-size:13px;font-weight:500">${(() => { const n = D.listItems().filter(i => !i.done).length; return n ? n + ' on the list ›' : 'start a list ›'; })()}</span></button>
     <div class="l">Recent memories</div>
@@ -1130,6 +1131,90 @@ ACT.pushOn = async () => {
 };
 ACT.pushOff = async () => { try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); if (sub) { await Store.remove(subId(sub)); await sub.unsubscribe(); } } catch (e) {} pushState.on = false; toast('Off on this phone'); render(); };
 ACT.pushTest = async () => { await Store.put('pushtest', { id: Store.uid(), userId: D.me().id, at: Date.now() }); toast('Sent — it should arrive in a few seconds'); };
+// ---------- V2.16: reminders for each other (or yourselves) ----------
+// A reminder is a message, a time in that person's own time zone, and days (or one date). The notify function
+// checks every minute; it can ask for a ✓ (tap the notification → "Done"), nudge once 45 minutes later if there's
+// no ✓, and skip the days you're together. ✓s are records of their own ("rdone"), so the other person sees them.
+const DAY1 = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const remFor = r => r.for === 'both' ? D.users2().map(u => u.id) : [r.for];
+const dowOf = d => new Date(d + 'T12:00:00').getDay();
+const minsIn = u => { try { const p = new Intl.DateTimeFormat('en-CA', { timeZone: (u && u.tz) || undefined, hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date()); const g = k => +((p.find(x => x.type === k) || {}).value || 0); return (g('hour') % 24) * 60 + g('minute'); } catch (e) { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); } };
+const remMin = r => { const [h, m] = (r.time || '0:0').split(':').map(Number); return h * 60 + m; };
+const remClock = t => imgTime('0000-00-00T' + (t || '00:00'));
+const remRepeat = r => { if (r.once) return 'Once · ' + fmtDow(r.once) + ' ' + MON[parseDate(r.once).getMonth()]; const d = (r.days || []).slice().sort(); const k = d.join(''); return k === '0123456' ? 'Every day' : k === '12345' ? 'Weekdays' : k === '06' ? 'Weekends' : d.map(i => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][i]).join(' · '); };
+const remToday = (r, u) => { const d = todayIn(u); if (r.paused || !r.text) return false; if (r.once) return r.once === d; return (r.days || []).includes(dowOf(d)) && !(r.together && D.tripForDate(d)); };
+const remTick = (r, uid, date) => Store.get('rdone', 'rd_' + r.id + '_' + uid + '_' + date);
+const hasPush = uid => Store.all('push').some(p => p.userId === uid);
+const reminders = () => Store.all('reminders').sort((a, b) => remMin(a) - remMin(b));
+// how it stands today for one person: 'later' (not yet) · 'due' (sent, no ✓ yet) · 'done' · 'sent' (no check-in)
+function remState(r, u){ const d = todayIn(u); const t = remTick(r, u.id, d); if (t) return { k: 'done', at: t.at }; if (minsIn(u) < remMin(r)) return { k: 'later' }; return { k: r.checkin ? 'due' : 'sent' }; }
+function remHomeHTML(){
+  const me = D.me(); const rows = [];
+  reminders().forEach(r => remFor(r).forEach(uid => { const u = D.user(uid); if (!u || !remToday(r, u)) return; const st = remState(r, u); const mine = uid === me.id;
+    const right = st.k === 'done' ? `<span class="remok">✓ ${timeIn(me, new Date(st.at))}</span>` : st.k === 'due' && mine ? `<button class="btn sm" data-act="remDone|${r.id}">✓ Done</button>` : st.k === 'due' ? '<span class="l">no ✓ yet</span>' : st.k === 'sent' ? `<span class="l">${remClock(r.time)} ✓</span>` : `<span class="l">${remClock(r.time)}${!mine && u.tz !== me.tz ? ' ' + esc(u.city || '') : ''}</span>`;
+    rows.push([remMin(r), `<div class="row remrow"><span class="remtx">${palOf(uid)}<span>${esc(r.text)}</span></span>${right}</div>`]); }));
+  if (!rows.length) return '';
+  return `<div class="glass rems"><button class="row tap" data-go="reminders" style="width:100%"><span class="l">Reminders today</span><span class="l">›</span></button>${rows.sort((a, b) => a[0] - b[0]).map(x => x[1]).join('')}</div>`;
+}
+ACT.remNew = () => { closeSheet(); ACT.remSheet(); };
+ACT.remDone = async rid => { const me = D.me(), d = todayIn(me); await Store.put('rdone', { id: 'rd_' + rid + '_' + me.id + '_' + d, rid, uid: me.id, date: d, at: Date.now() }); toast('✓ Done'); render(); };
+// tapping the notification opens this
+function renderRem(app){
+  const me = D.me(), r = Store.get('reminders', route.id);
+  if (!r) { app.innerHTML = `<div class="screen"><div class="bar"><button data-go="home">‹ Home</button><span>Reminder</span></div><div class="empty">This reminder was deleted.</div></div>${nav('home')}`; return; }
+  const from = r.by && r.by !== me.id ? D.user(r.by) : null; const t = remTick(r, me.id, todayIn(me));
+  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="home">‹ Home</button><span>Reminder</span></div>
+    <div class="remcard">${from ? `<i class="pal lg ${from.pal}"></i>` : ''}<div class="hd">${esc(r.text)}</div><div class="sub">${from ? 'from ' + esc(from.name) + ' ♡ · ' : ''}${remClock(r.time)} · ${esc(remRepeat(r))}</div>
+      ${r.checkin ? (t ? `<div class="remdone">✓ Done at ${timeIn(me, new Date(t.at))}</div>${from ? `<div class="l">${esc(from.name)} can see it</div>` : ''}` : `<button class="btn block" data-act="remDone|${r.id}" style="margin-top:22px">✓ Done</button>${from ? `<div class="l" style="margin-top:8px">${esc(from.name)} will see the ✓</div>` : ''}`) : `<button class="btn block lite" data-go="home" style="margin-top:22px">OK</button>`}
+    </div><button class="row" data-go="reminders" style="width:100%;margin-top:6px"><span class="l">All reminders</span><span class="l">›</span></button></div>${nav('home')}`;
+}
+function renderReminders(app){
+  const me = D.me(), o = D.other(); const all = reminders();
+  const card = r => { const who = r.for === 'both' ? 'Both of you' : r.for === me.id ? 'You' : esc((D.user(r.for) || {}).name || ''); const tz = r.for !== 'both' && r.for !== me.id && (D.user(r.for) || {}).tz !== me.tz ? ' · ' + esc((D.user(r.for) || {}).city || '') + ' time' : '';
+    return `<button class="remitem ${r.paused ? 'paused' : ''}" data-act="remSheet|${r.id}"><div class="row"><span class="remtx">${r.for === 'both' ? '' : palOf(r.for)}<b>${esc(r.text)}</b></span><span class="num" style="font-size:17px">${remClock(r.time)}</span></div>
+      <div class="l" style="margin-top:4px">${who} · ${esc(remRepeat(r))}${tz}${r.checkin ? ' · asks for ✓' : ''}${r.checkin && r.nudge ? ' · nudge' : ''}${!r.once && r.together ? ' · not on trips' : ''}${r.paused ? ' · paused' : ''}${r.by && r.by !== me.id ? ' · from ' + esc((D.user(r.by) || {}).name || '') : ''}</div></button>`; };
+  const off = D.users2().filter(u => !hasPush(u.id) && all.some(r => !r.paused && remFor(r).includes(u.id)));
+  app.innerHTML = `<div class="screen"><div class="bar"><button data-go="profile">‹ Profile</button><span>Reminders</span></div><h1 class="hd">Reminders</h1>
+    <div class="sub" style="text-align:left;margin-top:-8px">A notification at a time you choose — for ${o ? esc(o.name) + ', you, or both' : 'you'}. Times are in that person's own time zone.</div>
+    ${off.map(u => `<div class="glass" style="font-size:13px">${u.id === me.id ? 'Notifications aren\'t on for you on this phone yet — <button class="lnk" data-go="notify">turn them on</button>.' : esc(u.name) + ' hasn\'t turned on notifications yet, so reminders can\'t reach ' + (u.pal === 'puppy' ? 'him' : 'her') + '. On ' + (u.pal === 'puppy' ? 'his' : 'her') + ' phone: Profile → Notifications → Turn on.'}</div>`).join('')}
+    ${all.length ? all.map(card).join('') : `<div class="empty">None yet. Like “Eat lunch 🍱” for ${o ? esc(o.name) : 'you'}, every weekday at 12:30.</div>`}
+    <button class="btn block" data-act="remSheet">+ New reminder</button></div>${nav('')}`;
+}
+ACT.remSheet = id => {
+  const me = D.me(), o = D.other(); const old = id ? Store.get('reminders', id) : null;
+  const r = old ? JSON.parse(JSON.stringify(old)) : { for: o ? o.id : me.id, text: '', time: '12:30', days: [1, 2, 3, 4, 5], once: '', checkin: true, nudge: true, together: true };
+  let rep = r.once ? 'once' : remRepeat(r) === 'Every day' ? 'daily' : remRepeat(r) === 'Weekdays' ? 'weekdays' : 'custom';
+  const keep = () => { const t = $('#r-text'), tm = $('#r-time'), d = $('#r-date'); if (t) r.text = t.value; if (tm && tm.value) r.time = tm.value; if (d && d.value) r.once = d.value; };
+  const tgt = () => r.for === 'both' ? null : D.user(r.for);
+  const draw = () => { const u = tgt(); const tzNote = u && u.id !== me.id && u.tz !== me.tz ? `${remClock(r.time)} ${esc(u.city || '')} time, ${esc(u.name)}'s` : r.for === 'both' && o && o.tz !== me.tz ? `${remClock(r.time)} for each of you, in your own time` : '';
+    const noPush = (r.for === 'both' ? D.users2() : [u]).filter(x => x && !hasPush(x.id));
+    const tog = (k, label, dis) => `<div class="row" style="${dis ? 'opacity:.4' : ''}"><span style="font-size:13.5px">${label}</span><button class="tog ${r[k] ? '' : 'off'}" data-act="remTog|${k}" ${dis ? 'disabled' : ''}></button></div>`;
+    return `<div class="bar"><button data-act="closeSheet">Cancel</button><span>${old ? 'Reminder' : 'New reminder'}</span><button data-act="remSave" style="font-weight:600">Save</button></div>
+      <div class="l">For</div><div class="seg" style="margin-top:6px">${o ? `<button class="${r.for === o.id ? 'on' : ''}" data-act="remFor|${o.id}">${esc(o.name)}</button>` : ''}<button class="${r.for === me.id ? 'on' : ''}" data-act="remFor|${me.id}">Me</button>${o ? `<button class="${r.for === 'both' ? 'on' : ''}" data-act="remFor|both">Both of us</button>` : ''}</div>
+      <input class="in" id="r-text" placeholder="Eat lunch 🍱" value="${esc(r.text)}" maxlength="80" style="margin-top:14px">
+      <div class="row" style="margin-top:12px"><span style="font-size:13.5px">Time</span><input class="in" type="time" id="r-time" value="${esc(r.time)}" style="width:auto;padding:7px 10px" data-act="remRedraw" data-on="change"></div>
+      ${tzNote ? `<div class="l" style="margin-top:4px">${tzNote}</div>` : ''}
+      <div class="seg" style="margin-top:12px">${[['once', 'Once'], ['daily', 'Every day'], ['weekdays', 'Weekdays'], ['custom', 'Pick days']].map(([k, l]) => `<button class="${rep === k ? 'on' : ''}" data-act="remRep|${k}">${l}</button>`).join('')}</div>
+      ${rep === 'custom' ? `<div class="remdays">${DAY1.map((l, i) => `<button class="${(r.days || []).includes(i) ? 'on' : ''}" data-act="remDay|${i}">${l}</button>`).join('')}</div>` : ''}
+      ${rep === 'once' ? `<div class="row" style="margin-top:10px"><span style="font-size:13.5px">Date</span><input class="in" type="date" id="r-date" value="${esc(r.once || todayIn(u || me))}" style="width:auto;padding:7px 10px"></div>` : ''}
+      <div class="list" style="margin-top:14px">${tog('checkin', 'Ask for a ✓ when it\'s done')}${tog('nudge', 'Nudge again after 45 min if no ✓', !r.checkin)}${rep !== 'once' ? tog('together', 'Skip days we\'re together') : ''}</div>
+      ${noPush.length ? `<div class="l" style="margin-top:10px">${noPush.map(x => x.id === me.id ? 'Your notifications aren\'t on yet (Profile → Notifications).' : esc(x.name) + ' hasn\'t turned on notifications yet — it won\'t reach ' + (x.pal === 'puppy' ? 'him' : 'her') + ' until then.').join(' ')}</div>` : ''}
+      ${old ? `<div class="row" style="margin-top:16px"><button class="chip" data-act="remPause">${r.paused ? 'Resume' : 'Pause'}</button><button class="chip" data-act="remDel" style="color:#B8627A">Delete</button></div>` : ''}`; };
+  const redraw = () => { keep(); const sh = $('.sheet'); if (sh) { sh.innerHTML = '<div class="grip"></div>' + draw(); bind(sh); } };
+  ACT.remRedraw = redraw;
+  ACT.remFor = k => { keep(); r.for = k; redraw(); };
+  ACT.remRep = k => { keep(); rep = k; if (k === 'daily') r.days = [0, 1, 2, 3, 4, 5, 6]; if (k === 'weekdays') r.days = [1, 2, 3, 4, 5]; if (k === 'custom' && !(r.days || []).length) r.days = [1, 2, 3, 4, 5]; if (k !== 'once') r.once = ''; redraw(); };
+  ACT.remDay = i => { keep(); i = +i; r.days = (r.days || []).includes(i) ? r.days.filter(x => x !== i) : (r.days || []).concat(i).sort(); redraw(); };
+  ACT.remTog = k => { keep(); r[k] = !r[k]; redraw(); };
+  ACT.remPause = async () => { keep(); const cur = Store.get('reminders', old.id); await Store.put('reminders', Object.assign({}, cur, { paused: !cur.paused, since: Date.now() })); closeSheet(); toast(cur.paused ? 'Resumed' : 'Paused'); render(); };
+  ACT.remDel = async () => { if (!await ask('Delete this reminder?', { sub: r.text, ok: 'Delete' })) return; await Store.remove(old.id); closeSheet(); render(); };
+  ACT.remSave = async () => { keep(); r.text = (r.text || '').trim(); if (!r.text) return toast('Write the reminder first'); if (!/^\d{1,2}:\d{2}$/.test(r.time || '')) return toast('Pick a time');
+    if (rep === 'once') { r.once = r.once || todayIn(tgt() || me); r.days = []; } else { r.once = ''; if (!(r.days || []).length) return toast('Pick at least one day'); }
+    if (!r.checkin) r.nudge = false;
+    await Store.put('reminders', Object.assign(r, { id: old ? old.id : 'rem_' + Store.uid(), by: old ? old.by : me.id, since: Date.now(), createdAt: old ? old.createdAt : Date.now(), paused: old ? !!old.paused : false }));
+    closeSheet(); toast(old ? 'Saved' : 'Reminder set ♡'); if (route.name !== 'reminders') go('reminders'); else render(); };
+  openSheet(draw());
+};
 if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.go) { location.hash = e.data.go; } });
 
 // ---------- birthdays ----------
@@ -1285,7 +1370,7 @@ function renderProfile(app){
     <div class="glass"><div class="row"><span style="font-size:13.5px">Photos</span><div class="seg" style="width:150px"><button class="${s.photoStyle==='polaroid'?'on':''}" data-act="photoStyle|polaroid">Polaroid</button><button class="${s.photoStyle==='clean'?'on':''}" data-act="photoStyle|clean">Clean</button></div></div></div>
     <div class="glass"><div class="row"><span style="font-size:13.5px">Sky</span><div class="seg" style="width:200px"><button class="${(s.sky||'auto')==='auto'?'on':''}" data-act="sky|auto">Follow</button><button class="${s.sky==='light'?'on':''}" data-act="sky|light">Light</button><button class="${s.sky==='dark'?'on':''}" data-act="sky|dark">Dark</button></div></div></div>
     <div class="glass"><div class="row"><span style="font-size:13.5px">Where I am</span><select class="in" style="width:auto;padding:6px 10px;font-size:12px" data-act="myCity" data-on="change">${Object.keys(CITIES).map(c => `<option ${me.city===c?'selected':''}>${c}</option>`).join('')}</select></div></div>
-    <div class="list" style="font-size:13.5px"><div class="row"><span>Together since</span><input class="in" type="date" value="${esc(s.anniversary||'')}" data-act="anniEdit" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div><div class="row"><span>My birthday</span><input class="in" type="date" value="${esc(me.birthday||'')}" data-act="bdayEdit|${me.id}" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div>${D.other() ? `<div class="row"><span>${esc(D.other().name)}'s birthday</span><input class="in" type="date" value="${esc(D.other().birthday||'')}" data-act="bdayEdit|${D.other().id}" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div>` : ''}<button class="row" data-go="gcal"><span>Google Calendar</span><span class="l">${(me.icsUrls||[]).length ? 'live · ' + me.icsUrls.length : 'connect'} ›</span></button><button class="row" data-go="emails"><span>Trip emails</span><span class="l">›</span></button><button class="row" data-go="notify"><span>Notifications</span><span class="l">${pushState.on ? 'on' : 'off'} ›</span></button><button class="row" data-go="chat"><span>Chat</span><span class="l">${D.bubbles().length} ›</span></button><button class="row" data-go="search"><span>Search</span><span class="l">memories, notes, songs, chat ›</span></button><button class="row" data-go="money"><span>My money</span><span class="l">only you ›</span></button><button class="row" data-go="cycle"><span>Cycle</span><span class="l">›</span></button><button class="row" data-act="howto"><span>How it works</span><span class="l">›</span></button><button class="row" data-act="whatsNew"><span>What's new</span><span class="l">v${APP_VERSION} ›</span></button><button class="row" data-act="exportAll"><span>Export everything</span><span class="l">backup ›</span></button><button class="row" data-act="importAll"><span>Restore a backup</span><span class="l">›</span></button><button class="row" data-act="storageSheet"><span>Storage</span><span class="l">how full ›</span></button>
+    <div class="list" style="font-size:13.5px"><div class="row"><span>Together since</span><input class="in" type="date" value="${esc(s.anniversary||'')}" data-act="anniEdit" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div><div class="row"><span>My birthday</span><input class="in" type="date" value="${esc(me.birthday||'')}" data-act="bdayEdit|${me.id}" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div>${D.other() ? `<div class="row"><span>${esc(D.other().name)}'s birthday</span><input class="in" type="date" value="${esc(D.other().birthday||'')}" data-act="bdayEdit|${D.other().id}" data-on="change" style="width:auto;padding:6px 10px;font-size:12px"></div>` : ''}<button class="row" data-go="gcal"><span>Google Calendar</span><span class="l">${(me.icsUrls||[]).length ? 'live · ' + me.icsUrls.length : 'connect'} ›</span></button><button class="row" data-go="emails"><span>Trip emails</span><span class="l">›</span></button><button class="row" data-go="reminders"><span>Reminders</span><span class="l">${Store.all('reminders').length || ''} ›</span></button><button class="row" data-go="notify"><span>Notifications</span><span class="l">${pushState.on ? 'on' : 'off'} ›</span></button><button class="row" data-go="chat"><span>Chat</span><span class="l">${D.bubbles().length} ›</span></button><button class="row" data-go="search"><span>Search</span><span class="l">memories, notes, songs, chat ›</span></button><button class="row" data-go="money"><span>My money</span><span class="l">only you ›</span></button><button class="row" data-go="cycle"><span>Cycle</span><span class="l">›</span></button><button class="row" data-act="howto"><span>How it works</span><span class="l">›</span></button><button class="row" data-act="whatsNew"><span>What's new</span><span class="l">v${APP_VERSION} ›</span></button><button class="row" data-act="exportAll"><span>Export everything</span><span class="l">backup ›</span></button><button class="row" data-act="importAll"><span>Restore a backup</span><span class="l">›</span></button><button class="row" data-act="storageSheet"><span>Storage</span><span class="l">how full ›</span></button>
     ${Store.mode === 'supabase' ? `<button class="row" data-act="${Store.user?'signout':'signinSheet'}"><span>${Store.user ? 'Signed in · ' + esc(Store.user.email) : 'Sign in to sync'}</span><span class="l">›</span></button>` : `<div class="row"><span>Sync</span><span class="l">local only · add Supabase keys</span></div>`}
     <button class="row" data-act="switchUser"><span>Switch person</span><span class="l">›</span></button><button class="row" data-act="resetAll"><span class="muted">Start over</span><span class="l">›</span></button></div>
   </div>${nav('')}`;
@@ -1939,7 +2024,7 @@ ACT.impSave = async () => {
   toast(made + ' memor' + (made === 1 ? 'y' : 'ies') + ' added'); if (tripId) go('days', { id: tripId }); else go('memories');
 };
 // the + on Home: one memory, or a pile of photos
-ACT.homeAdd = () => openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Add</span></div><div class="list" style="font-size:13.5px">${rowBtn('newMoment', 'New memory', 'A message, photos, voice, song or cost')}${rowBtn('importStart', 'Import photos & videos', 'A pile of them, sorted into days and moments')}${rowBtn('tripAdd', 'New trip', 'City and dates, or from a booking')}${rowBtn('bookingSheet', 'Add a booking', 'Tickets, reservations, flights, stays — from the email or PDF')}${rowBtn('spendNew', 'Log my spending', 'My money — only you see it')}</div>`);
+ACT.homeAdd = () => openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Add</span></div><div class="list" style="font-size:13.5px">${rowBtn('newMoment', 'New memory', 'A message, photos, voice, song or cost')}${rowBtn('importStart', 'Import photos & videos', 'A pile of them, sorted into days and moments')}${rowBtn('tripAdd', 'New trip', 'City and dates, or from a booking')}${rowBtn('bookingSheet', 'Add a booking', 'Tickets, reservations, flights, stays — from the email or PDF')}${rowBtn('spendNew', 'Log my spending', 'My money — only you see it')}${rowBtn('remNew', 'Set a reminder', 'A notification at a time you choose — like lunch for ' + esc((D.other() || D.me()).name))}</div>`);
 
 // ---------- V2.9: export everything / restore ----------
 // One zip: every photo, voice note, chat photo and sticker in folders by date, readable text files,
@@ -2315,7 +2400,7 @@ ACT.storageSheet = async () => { openSheet(`<div class="bar"><button data-act="c
     <div class="sub" style="text-align:left">${pct > 75 ? 'Getting full. Deleting a few long videos frees the most space; Supabase\'s Pro plan has 100 GB.' : 'Videos take the most room — a minute can be 50 MB, about 150 photos.'}</div>`; };
 
 // ---------- What's new (shown once per phone after an update; Profile → What's new replays it) ----------
-const APP_VERSION = '2.15'; const WN_VERSIONS = ['2.10', '2.11', '2.12', '2.13', '2.14', '2.15'];
+const APP_VERSION = '2.16'; const WN_VERSIONS = ['2.10', '2.11', '2.12', '2.13', '2.14', '2.15', '2.16'];
 let wnIdx = 0, wnForce = false;
 function needsWhatsNew(){ if (window.DJ_SKIP_WHATSNEW && !wnForce) return false; if (wnForce) return true; try { return localStorage.getItem('dj.seenVer') !== APP_VERSION; } catch (e) { return false; } }
 function markWhatsNewSeen(){ try { localStorage.setItem('dj.seenVer', APP_VERSION); } catch (e) {} }
@@ -2364,7 +2449,11 @@ function whatsNewCards(){ const [a, b] = D.users2(); const o = D.other() || b ||
     ['Long videos: pick the part', `Videos go everywhere photos do now — memories, chat, Home and Import, which sorts them into days with your photos. If one's over 50 MB, choose the part to keep, like Instagram: drag the ends. <b>Full quality</b> cuts it straight out (about 45 seconds of 1080p); <b>Smaller</b> fits up to 5 minutes at 720p, but plays through once to shrink it.`,
       `<div class="mini" style="background:#111;color:#fff"><div class="row" style="font-size:13px"><b style="font-size:17px;font-weight:500">0:38</b><span style="opacity:.7">0:12 – 0:50 of 2:10</span></div><div style="position:relative;height:44px;margin-top:10px;border-radius:8px;overflow:hidden;background:linear-gradient(90deg,#6F9C8E,#B9D3C9,#C98F7A,#8E6A7E,#C4D4E6)"><div style="position:absolute;top:0;bottom:0;left:10%;width:30%;border:3px solid #F6E39A;border-left-width:12px;border-right-width:12px;border-radius:8px;box-shadow:0 0 0 999px rgba(0,0,0,.55)"></div></div><div style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12px"><div style="flex:1;height:5px;border-radius:3px;background:rgba(255,255,255,.15)"><i style="display:block;width:82%;height:100%;border-radius:3px;background:#F6E39A"></i></div>41 MB of 50</div></div>`],
   ].map(c => c.concat('2.15'));
-  return v215.concat(v214).concat(v213).concat(v212).concat(v211).concat([
+  const v216 = [
+    ['Reminders', `Set a notification for each other — or yourself — at a time you choose: “Eat lunch 🍱” every weekday at 12:30, in his own time zone. Tap it to ✓ when it's done, and the other person sees it on Home. No ✓ after 45 minutes? One more gentle nudge. Days you're together can be skipped. + on Home → Set a reminder, or Profile → Reminders.`,
+      `<div class="mini"><div class="row" style="font-size:12px"><span class="l">Reminders today</span><span class="l">›</span></div><div class="row remrow"><span class="remtx"><i class="pal puppy"></i><span>Eat lunch 🍱</span></span><span class="remok">✓ 12:41pm</span></div><div class="row remrow"><span class="remtx"><i class="pal bunny"></i><span>Vitamins</span></span><span class="btn sm">✓ Done</span></div></div>`],
+  ].map(c => c.concat('2.16'));
+  return v216.concat(v215).concat(v214).concat(v213).concat(v212).concat(v211).concat([
     ['Chat, with photos', `Chat has its own typing box now. Send messages, 💭 thoughts, photos and stickers — photos stay, and you can save them to your phone. You can also send a photo from your pal on Home.`,
       `<div class="mini" style="display:flex;flex-direction:column;gap:8px">${msg(o, `<div class="b">look where we ate 😭</div>`)}${msg(o, `<div class="cph" style="width:130px;height:96px;background:linear-gradient(135deg,#E9C9A8,#C98F7A)"></div>`)}${msg(me, `<div class="b">going back tomorrow</div>`, true)}<div class="composer" style="margin-top:4px"><span class="cbtn">◫</span><span class="cbtn">☺</span><span class="in" style="color:var(--mu);font-size:14px">say something</span><span class="btn sm">Send</span></div></div>`],
     ['Your own stickers', `Make stickers out of your photos: in Photos, press and hold one of you until it lifts out, tap <b>Copy</b>, then <b>Paste</b> here. They're shared — use them on photos and in chat. Hold one to remove it.`,

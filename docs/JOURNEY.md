@@ -158,3 +158,10 @@ Two evenings of feedback rounds on real screens produced V2:
 - Full quality: the part is cut straight out of the MP4/MOV with no re-encoding (instant; frame-for-frame the original, date and place kept). The movie's sample tables are rebuilt for just that part and the bytes copied; it starts on the nearest keyframe (≤1s earlier). About 45 seconds of 1080p, ~12 of 4K.
 - Smaller · 720p: plays the part once into a 720p recording (takes as long as the part; keep the app open), up to 5 minutes.
 - Includes V2.14b (Spotify's new playlist endpoints) and V2.14c (videos from every picker, videos in Import with their own date and place).
+
+## V2.16 (reminders)
+- Reminders (+ on Home → Set a reminder, or Profile → Reminders): a message for the other person, yourself, or both; a time in that person's own time zone; once, every day, weekdays, or picked days. Pause, edit or delete any time; each of you sees the ones set for you.
+- ✓ check-in: tapping the notification opens the reminder with "✓ Done"; the ✓ (its own small record) shows for both of you on Home under "Reminders today", with the time.
+- Nudge: if there's no ✓ 45 minutes later, one more gentle notification ("Still time ♡").
+- Skip days we're together: weekday reminders don't go on trip days.
+- The notify function now runs every minute so reminders land on time (trips, flights, birthdays and the 23rd still check every 5 minutes). A reminder set after today's time starts tomorrow; changing the time lets it go again today.

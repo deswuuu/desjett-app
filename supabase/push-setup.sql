@@ -18,8 +18,8 @@ end $$;
 drop trigger if exists dj_notify on public.docs;
 create trigger dj_notify after insert or update on public.docs for each row execute function public.dj_notify();
 
--- 2. every 15 minutes, check for reminders (trips, flights, birthdays, the 23rd)
-select cron.schedule('dj-reminders', '*/15 * * * *', $$
+-- 2. every minute, check for reminders (yours, plus trips, flights, birthdays, the 23rd)
+select cron.schedule('dj-reminders', '* * * * *', $$
   select net.http_post(
     url := 'https://YOUR-PROJECT-REF.supabase.co/functions/v1/notify',
     headers := jsonb_build_object('Content-Type','application/json','x-notify-secret','YOUR-NOTIFY-SECRET'),
