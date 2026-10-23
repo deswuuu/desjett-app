@@ -167,10 +167,22 @@ function bind(root){
   root.querySelectorAll('[data-view]').forEach(el => el.addEventListener('click', e => { if (pendingSticker || e.target.classList.contains('stk') || el._dragged) return; ACT.viewPh(el.dataset.view); }));
   // full photos load now (and retry if the other phone hasn't finished uploading); previews load as they scroll into view
   root.querySelectorAll('[data-asset]').forEach(el => loadImg(el, () => Store.blobUrl(el.dataset.asset), 0, true));
+  root.querySelectorAll('video[data-stream]').forEach(el => { if (el.dataset.poster) Store.blobUrl(el.dataset.poster).then(u => { if (u) el.poster = u; }); streamVideo(el, el.dataset.stream); });
   root.querySelectorAll('[data-thumb]').forEach(el => { if (imgIO) imgIO.observe(el); else loadImg(el, () => previewUrl(el.dataset.thumb, el.dataset.pv)); });
 }
 const imgQ = []; let imgActive = 0;
 function runImg(){ while (imgActive < 4 && imgQ.length) { const job = imgQ.shift(); if (!job.el.isConnected) continue; imgActive++; job.fn().catch(() => {}).finally(() => { imgActive--; runImg(); }); } }
+// V2.17.1: a video plays from a streaming link (or this phone's copy). If the other phone is still uploading it,
+// say so on the video and try again every 10 seconds until it arrives.
+function streamVideo(el, id){ if (!el || !id || el.dataset.streaming) return; el.dataset.streaming = 1; el.preload = 'metadata';
+  const wrap = el.parentElement; const note = on => { let n = wrap && wrap.querySelector('.vwait'); if (on && !n && wrap) { n = document.createElement('div'); n.className = 'vwait'; n.textContent = 'On its way — still uploading from the other phone. It\'ll play here when it arrives.'; wrap.appendChild(n); } if (!on && n) n.remove(); };
+  const tryIt = async k => { if (!el.isConnected) return; const u = await Store.mediaUrl(id).catch(() => null); if (u) { note(false); el.src = u; el.classList.add('loaded'); return; } note(true); setTimeout(() => tryIt((k || 0) + 1), 10000); };
+  tryIt(0); }
+// the sending phone: a small pill while a video uploads (it keeps going in the background, and resumes if the app closes)
+(() => { let pill = null, hideT = 0; const show = t => { if (!pill) { pill = document.createElement('div'); pill.className = 'uppill'; document.body.appendChild(pill); } pill.textContent = t; clearTimeout(hideT); };
+  if (window.Store && Store.onUpload) Store.onUpload(e => { if (e.done) { show('Video uploaded ✓'); hideT = setTimeout(() => { if (pill) { pill.remove(); pill = null; } }, 2500); return; }
+    if (e.done === false) { show('Video upload paused — it\'ll keep trying'); hideT = setTimeout(() => { if (pill) { pill.remove(); pill = null; } }, 4000); return; }
+    const n = Store.uploading().length; show('Uploading video' + (n > 1 ? 's (' + n + ')' : '') + ' · ' + Math.floor(e.sent / Math.max(1, e.total) * 100) + '%'); }); })();
 function setImg(el, u){ if (el.tagName === 'IMG' || el.tagName === 'VIDEO') el.src = u; else el.style.backgroundImage = `url(${u})`; el.classList.add('loaded'); }
 const RETRY = [2000, 6000, 15000, 40000, 90000];
 function loadImg(el, get, tries, now){ const job = { el, fn: async () => { const u = await get().catch(() => null); if (u) setImg(el, u); else if ((tries || 0) < RETRY.length) setTimeout(() => { if (el.isConnected) loadImg(el, get, (tries || 0) + 1, now); }, RETRY[tries || 0]); } };
@@ -631,8 +643,10 @@ function drawViewer(keepText){
 }
 // load the photo you're on and the ones either side (preview first, then the full photo)
 function viewerLoad(sh){ const near = [viewer.i, viewer.i + 1, viewer.i - 1, viewer.i + 2];
+  // V2.17.1: only the video you're on loads, and it streams (plays while it downloads); the others pause
+  sh.querySelectorAll('.vslide video').forEach(v => { const j = +v.closest('.vslide').dataset.j; if (j !== viewer.i) { if (!v.paused) v.pause(); } else streamVideo(v, v.dataset.src); });
   near.forEach(j => { const sl = sh.querySelector(`.vslide[data-j="${j}"]`); if (!sl) return; const el = sl.querySelector('img,video'); if (!el || el.dataset.loaded) return; el.dataset.loaded = 1;
-    if (el.tagName === 'VIDEO') { if (el.dataset.poster) Store.blobUrl(el.dataset.poster).then(u => { if (u) el.poster = u; }); loadImg(el, () => Store.blobUrl(el.dataset.src), 0, true); return; }
+    if (el.tagName === 'VIDEO') { if (el.dataset.poster) Store.blobUrl(el.dataset.poster).then(u => { if (u) el.poster = u; }); return; }
     if (el.dataset.pv) previewUrl(el.dataset.src, el.dataset.pv).then(u => { if (u && !el.dataset.full) el.src = u; });
     loadImg(el, async () => { const u = await Store.blobUrl(el.dataset.src); if (u) el.dataset.full = 1; return u; }, 0, true); }); }
 function viewerBody(keepText){
@@ -648,7 +662,7 @@ function viewerBody(keepText){
       <div class="vact"><button data-act="vFeature">${p.featured ? '★ Featured' : '☆ Feature'}</button>${p.video ? '' : '<button data-act="vFlip">⇋ Flip</button><button data-act="vStickers">Stickers</button>'}<button data-act="shareAsset|${p.asset}">Save</button><button data-act="vDelete">Delete</button></div>`;
   bind(body); viewerLoad(sh);
   if (focusId) { const f = sh.querySelector('#' + focusId); if (f) f.focus(); }
-  prefetch(p.asset); const nx = vItem(viewer.list[(viewer.i + 1) % viewer.list.length]); if (nx && !nx.p.video) prefetch(nx.p.asset);
+  if (!p.video) prefetch(p.asset); const nx = vItem(viewer.list[(viewer.i + 1) % viewer.list.length]); if (nx && !nx.p.video) prefetch(nx.p.asset);
   sh.querySelectorAll('video').forEach((v, j) => { if (+v.closest('.vslide').dataset.j !== viewer.i && !v.paused) v.pause(); });
 }
 // pinch / double-tap zoom and drag while zoomed; a single tap shows or hides the buttons; swipe down closes
@@ -682,9 +696,16 @@ ACT.vStickers = () => { const cur = viewer.list[viewer.i]; const m = Store.get('
 ACT.vDelete = async () => { if (!await ask('Delete this photo?', { sub: 'It\'s removed for both of you.', ok: 'Delete' })) return; const cur = viewer.list[viewer.i]; const m = Store.get('moments', cur.mid); const [p] = m.photos.splice(cur.idx, 1); await Store.put('moments', m); if (p) { Store.removeBlob(p.asset); if (p.thumb) Store.removeBlob(p.thumb); await Store.removeMany(Store.all('comments').filter(c => c.asset === p.asset).map(c => c.id)); } viewer.list = viewer.list.filter((x, j) => j !== viewer.i).map(x => x.mid === cur.mid && x.idx > cur.idx ? { mid: x.mid, idx: x.idx - 1 } : x); if (!viewer.list.length) return ACT.vClose(); viewer.i = Math.min(viewer.i, viewer.list.length - 1); drawViewer(); toast('Deleted'); };
 let audioEl;
 ACT.play = async (id, el) => { if (audioEl && !audioEl.paused && audioEl.dataset.id === id) { audioEl.pause(); el.classList.remove('on'); return; } const u = await Store.blobUrl(id); if (!u) return; if (audioEl) audioEl.pause(); document.querySelectorAll('.play.on').forEach(p => p.classList.remove('on')); audioEl = new Audio(u); audioEl.dataset.id = id; el.classList.add('on'); audioEl.onended = () => el.classList.remove('on'); audioEl.play(); };
+const VIDEO_EXT = /\.(mov|mp4|m4v|webm)$/i;
+const fileTypeFor = (id, t) => { const ext = (id.split('.').pop() || '').toLowerCase(); const byExt = { mov: 'video/quicktime', mp4: 'video/mp4', m4v: 'video/x-m4v', webm: 'video/webm', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', heic: 'image/heic', webp: 'image/webp', m4a: 'audio/mp4', mp3: 'audio/mpeg', wav: 'audio/wav', aac: 'audio/aac' }; return (t && t !== 'application/octet-stream') ? t : byExt[ext] || 'application/octet-stream'; };
+const extFor = (id, type) => { const ext = (id.split('.').pop() || '').toLowerCase(); if (/^(mov|mp4|m4v|webm|jpg|jpeg|png|heic|webp|m4a|mp3|wav|aac)$/.test(ext)) return ext.replace('jpeg', 'jpg'); return ({ 'video/quicktime': 'mov', 'video/mp4': 'mp4', 'video/webm': 'webm', 'image/jpeg': 'jpg', 'image/png': 'png', 'audio/mp4': 'm4a', 'audio/mpeg': 'mp3' })[type] || 'jpg'; };
+const fetching = new Set();
 ACT.shareAsset = async id => { let b = ready.get(id);
+  if (!b && VIDEO_EXT.test(id)) { if (fetching.has(id)) return toast('Still getting the video ready…'); fetching.add(id); toast('Getting the video ready… 0%');
+    try { b = await Store.fetchBlob(id, p => toast('Getting the video ready… ' + Math.round(p * 100) + '%')); } finally { fetching.delete(id); }
+    if (!b) return toast('That video hasn\'t finished uploading yet — try again soon'); ready.set(id, b); if (navigator.canShare) return toast('Ready — tap Save again, then “Save Video”'); }
   if (!b) { b = await Store.blob(id); if (!b) return toast('Photo isn\'t on this phone yet — try again in a moment'); ready.set(id, b); if (navigator.canShare) return toast('Ready — tap Save again'); }
-  const ext = (b.type.split('/')[1] || id.split('.').pop() || 'jpg').replace('jpeg', 'jpg').replace('mp4', 'm4a'); const f = new File([b], 'des-jett-' + today() + '-' + id.slice(0, 5) + '.' + ext, { type: b.type });
+  const type = fileTypeFor(id, b.type); const f = new File([b], 'des-jett-' + today() + '-' + id.slice(0, 5) + '.' + extFor(id, type), { type });
   if (navigator.canShare && navigator.canShare({ files: [f] })) { try { await navigator.share({ files: [f] }); } catch (e) { if (e && e.name === 'NotAllowedError') toast('Tap Save again'); } return; } download(b, f.name); };
 function download(blob, name){ const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); }
 let pendingSticker = null;
@@ -1096,7 +1117,7 @@ ACT.openAtt = async id => { const b = await Store.blob(id); if (!b) return toast
 // ---------- notifications ----------
 // Each phone subscribes once; the server (supabase/functions/notify) sends to the other person's phones.
 const pushState = { on: false, checked: false, reason: '' };
-const NOTIFY = [['say','Say & think','when {o} says or thinks something'],['memories','New memories','one per memory'],['comments','Comments','on your photos'],['plans','New plans','when {o} adds a plan']];
+const NOTIFY = [['say','Say & think','when {o} says or thinks something'],['memories','New memories','one per memory'],['comments','Comments','on your photos'],['plans','New plans','when {o} adds a plan'],['remdone','Reminder ✓s','when {o} checks off a reminder you set']];
 const REMIND = [['trips','Trips','a week before and the day before'],['flights','Flights','an hour before landing, and when they land'],['birthdays','Birthdays','a week before and on the day'],['anni','The 23rd','the morning of each month']];
 async function checkPush(){ pushState.checked = true; pushState.on = false;
   if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) { pushState.reason = 'home'; return; }
@@ -1156,6 +1177,14 @@ function remHomeHTML(){
   if (!rows.length) return '';
   return `<div class="glass rems"><button class="row tap" data-go="reminders" style="width:100%"><span class="l">Reminders today</span><span class="l">›</span></button>${rows.sort((a, b) => a[0] - b[0]).map(x => x[1]).join('')}</div>`;
 }
+// the last 7 days it was due, per person: ✓ and the time (in their time), — if it wasn't ticked, · on days it wasn't due
+function remHistory(r){ if (!r.checkin) return '';
+  const lines = remFor(r).map(uid => { const u = D.user(uid); if (!u) return ''; const d0 = todayIn(u); const out = [];
+    for (let k = 6; k >= 0; k--) { const d = addDays(d0, -k); const due = r.once ? r.once === d : (r.days || []).includes(dowOf(d)); const t = remTick(r, uid, d);
+      const label = ['S', 'M', 'T', 'W', 'T', 'F', 'S'][dowOf(d)]; const before = (r.createdAt || 0) > Date.parse(d + 'T23:59:59');
+      out.push(`<span class="rh ${t ? 'ok' : due && !before && (k > 0 || remState(r, u).k === 'due') ? 'miss' : 'off'}"><b>${label}</b>${t ? timeIn(u, new Date(t.at)).replace(/\s?([ap]m)$/i, '$1') : due && !before && (k > 0 || remState(r, u).k === 'due') ? '—' : '·'}</span>`); }
+    return `<div class="rhrow">${remFor(r).length > 1 ? palOf(uid) : ''}${out.join('')}</div>`; }).join('');
+  return lines ? `<div class="rhist">${lines}</div>` : ''; }
 ACT.remNew = () => { closeSheet(); ACT.remSheet(); };
 ACT.remDone = async rid => { const me = D.me(), d = todayIn(me); await Store.put('rdone', { id: 'rd_' + rid + '_' + me.id + '_' + d, rid, uid: me.id, date: d, at: Date.now() }); toast('✓ Done'); render(); };
 // tapping the notification opens this
@@ -1172,6 +1201,7 @@ function renderReminders(app){
   const me = D.me(), o = D.other(); const all = reminders();
   const card = r => { const who = r.for === 'both' ? 'Both of you' : r.for === me.id ? 'You' : esc((D.user(r.for) || {}).name || ''); const tz = r.for !== 'both' && r.for !== me.id && (D.user(r.for) || {}).tz !== me.tz ? ' · ' + esc((D.user(r.for) || {}).city || '') + ' time' : '';
     return `<button class="remitem ${r.paused ? 'paused' : ''}" data-act="remSheet|${r.id}"><div class="row"><span class="remtx">${r.for === 'both' ? '' : palOf(r.for)}<b>${esc(r.text)}</b></span><span class="num" style="font-size:17px">${remClock(r.time)}</span></div>
+      ${remHistory(r)}
       <div class="l" style="margin-top:4px">${who} · ${esc(remRepeat(r))}${tz}${r.checkin ? ' · asks for ✓' : ''}${r.checkin && r.nudge ? ' · nudge' : ''}${!r.once && r.together ? ' · not on trips' : ''}${r.paused ? ' · paused' : ''}${r.by && r.by !== me.id ? ' · from ' + esc((D.user(r.by) || {}).name || '') : ''}</div></button>`; };
   const off = D.users2().filter(u => !hasPush(u.id) && all.some(r => !r.paused && remFor(r).includes(u.id)));
   app.innerHTML = `<div class="screen"><div class="bar"><button data-go="profile">‹ Profile</button><span>Reminders</span></div><h1 class="hd">Reminders</h1>
@@ -1702,8 +1732,8 @@ ACT.chatFiles = async (a, el) => { const files = Array.from(el.files || []); if 
   render(); };
 ACT.chatStk = () => openSheet(`<div class="bar"><button data-act="closeSheet">Close</button><span>Send a sticker</span></div>${stickerTray('chatSendStk')}<div class="l">Hold one of yours to remove it.</div>`, sh => { sh.dataset.tray = 'chatSendStk'; bindHold(sh); });
 ACT.chatSendStk = async arg => { const s = stkFrom(arg); closeSheet(); await Store.put('bubbles', { id: Store.uid(), userId: D.me().id, kind: 'say', sticker: s, text: 'sent a sticker', auto: true, at: Date.now() }); render(); };
-ACT.chatPhoto = id => { const b = Store.get('bubbles', id); if (!b) return; prefetch(b.photo); const mine = b.userId === D.me().id; const u = D.user(b.userId) || {};
-  openSheet(`<div class="vtop"><button data-act="closeSheet">‹ Chat</button><span>${esc(u.name||'')} · ${fmtD(isoDate(new Date(b.at)))}</span></div><div class="vstrip" style="overflow:hidden"><div class="vslide"><div class="vzoom">${b.video ? `<video controls playsinline preload="metadata" data-asset="${b.photo}"></video>` : `<img data-asset="${b.photo}" alt="">`}</div></div></div><div class="vbody">${b.text && !b.auto ? `<div style="font-size:14px">${esc(b.text)}</div>` : ''}<div class="vact"><button data-act="shareAsset|${b.photo}">Save to phone</button>${mine ? `<button data-act="chatDelPhoto|${b.id}">Delete</button>` : ''}</div></div>`, sh => { const sl = sh.querySelector('.vslide'); if (sl && !b.video) attachZoom(sl, null); }, 'viewer'); };
+ACT.chatPhoto = id => { const b = Store.get('bubbles', id); if (!b) return; if (!b.video) prefetch(b.photo); const mine = b.userId === D.me().id; const u = D.user(b.userId) || {};
+  openSheet(`<div class="vtop"><button data-act="closeSheet">‹ Chat</button><span>${esc(u.name||'')} · ${fmtD(isoDate(new Date(b.at)))}</span></div><div class="vstrip" style="overflow:hidden"><div class="vslide"><div class="vzoom">${b.video ? `<video controls playsinline preload="metadata" data-stream="${b.photo}" data-poster="${b.thumb || ''}"></video>` : `<img data-asset="${b.photo}" alt="">`}</div></div></div><div class="vbody">${b.text && !b.auto ? `<div style="font-size:14px">${esc(b.text)}</div>` : ''}<div class="vact"><button data-act="shareAsset|${b.photo}">Save to phone</button>${mine ? `<button data-act="chatDelPhoto|${b.id}">Delete</button>` : ''}</div></div>`, sh => { const sl = sh.querySelector('.vslide'); if (sl && !b.video) attachZoom(sl, null); }, 'viewer'); };
 ACT.chatDelPhoto = async id => { if (!await ask('Delete this photo?', { sub: 'It\'s removed from the chat for both of you.', ok: 'Delete' })) return; const b = Store.get('bubbles', id); if (b && b.photo) { Store.removeBlob(b.photo); if (b.thumb) Store.removeBlob(b.thumb); } await Store.remove(id); closeSheet(); render(); };
 
 // ---------- V2.9: things to do together (lists) ----------
@@ -2404,7 +2434,7 @@ const APP_VERSION = '2.17'; const WN_VERSIONS = ['2.10', '2.11', '2.12', '2.13',
 // V2.16.1: a new version was deployed while the app was open (iPhone keeps Home Screen apps running, so a tapped
 // notification brings back the old page). Each time the app opens or comes back, check version.json and reload into
 // the new one — unless you're in the middle of something, then offer it. APP_BUILD must match app/version.json.
-const APP_BUILD = '2.17';
+const APP_BUILD = '2.17.1';
 const verNewer = (a, b) => { const x = String(a || '').split('.').map(n => +n || 0), y = String(b || '').split('.').map(n => +n || 0); for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
 async function checkUpdate(){
   if (!location.protocol.startsWith('http')) return;

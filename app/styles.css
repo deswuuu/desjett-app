@@ -619,3 +619,16 @@ ul.cyl{margin:6px 0 0;padding-left:18px;font-size:13px;line-height:1.55;color:va
 .dropcard.no{border-color:var(--mu);opacity:.85}
 .dropic{width:52px;height:52px;border-radius:50%;background:var(--btn);color:var(--btnfg);display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:400;margin-bottom:6px}
 .dropcard.no .dropic{background:var(--mu)}
+
+/* V2.17.1: videos stream; upload progress */
+.vwait{position:absolute;left:12px;right:12px;bottom:14px;background:rgba(0,0,0,.6);color:#fff;font-size:12.5px;line-height:1.35;padding:9px 12px;border-radius:12px;text-align:center;pointer-events:none}
+.vzoom{position:relative}
+.uppill{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 84px);z-index:31;background:var(--btn);color:var(--btnfg);border-radius:99px;padding:8px 14px;font-size:12.5px;font-weight:500;box-shadow:0 6px 20px rgba(0,0,0,.18);white-space:nowrap;pointer-events:none}
+
+/* V2.17.1: reminder ✓ history */
+.rhist{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.rhrow{display:flex;gap:4px;align-items:center}.rhrow .pal{width:20px;height:20px;flex:none;margin-right:2px}
+.rh{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:1px;padding:5px 0;border-radius:10px;font-size:10px;color:var(--mu);background:rgba(0,0,0,.035)}
+.rh b{font-size:10.5px;font-weight:500;color:var(--fg2)}
+.rh.ok{background:rgba(94,139,111,.14);color:#4F7A60}.rh.ok b{color:#3E6A50}
+.rh.miss{color:#B8627A}

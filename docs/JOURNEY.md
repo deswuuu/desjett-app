@@ -171,3 +171,9 @@ Two evenings of feedback rounds on real screens produced V2:
 ## V2.17 (drop them in)
 - On the laptop, drag photos and videos from Finder or Photos onto the app. Where you drop decides: an open memory → added to it (long videos still get "Choose the part"); Chat → sent; a day → one memory on that day, or sorted into days (asks when there are several); a trip (or its Budget/Photos/Days) → Import for that trip; the Import review → added to it; anywhere else → Import, sorted into whichever trips and days they fit. A card shows where they'll go while you drag; other files are skipped with a note.
 - ⌘V pastes a copied photo or screenshot the same way; pasting text works as before.
+
+## V2.17.1 (videos that load fast; seeing reminder ✓s)
+- Videos stream: opening one plays from a link straight away (it used to download the whole file — twice — and copy it onto the phone first, and also download the videos on either side). Only the video you're on loads; the ones beside it show their still.
+- Uploading: big videos go on their own in 6 MB pieces (Supabase resumable uploads) that pick up where they left off if the app closes or the connection drops, with a small "Uploading video · 45%" pill. They no longer hold up messages, memories or photos queued behind them — the memory arrives with its still, and the other phone shows "On its way" on the video until it's there. If resumable uploads aren't available it falls back to the ordinary upload.
+- Save works for videos: "Getting the video ready… 45%", then tap Save again → Save Video. (It used to name videos .m4a, an audio type, so iPhone never offered Save Video.)
+- Reminder ✓s: when Jett ticks a reminder you set, you get a notification ("Jett ✓ Eat lunch 🍱 · Done at 12:41pm Jett's time (9:41am yours)"); for "both of you" reminders the other one is told. Profile → Notifications → Reminder ✓s turns it off. The Reminders page shows the last 7 days for each reminder with the time it was ticked.

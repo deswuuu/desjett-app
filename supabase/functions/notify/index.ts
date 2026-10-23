@@ -94,7 +94,13 @@ async function tick(nowOverride) {
   // reminders you set for each other (or yourselves): on time in that person's own time zone, once a day each;
   // with a ✓ check-in, one more nudge 45 minutes later if there's no ✓; optionally skipped on days you're together
   if (rems.length) {
-    const ticked = new Set((await q(`select=id&collection=eq.rdone&updated_at=gt.${new Date(now - 3 * 864e5).toISOString()}`)).map(r => r.id));
+    const rdRows = await q(`select=id,data&collection=eq.rdone&updated_at=gt.${new Date(now - 3 * 864e5).toISOString()}`); const ticked = new Set(rdRows.map(r => r.id));
+    // V2.17.1: someone ✓'d a reminder → tell the one who set it (and, for "both of you", the other one)
+    for (const row of rdRows) { const d = Object.assign({ id: row.id }, row.data); const r = rems.find(x => x.id === d.rid); if (!r || !d.uid || !(now - (d.at || 0) < 15 * 60000 && d.at <= now + 60000)) continue;
+      const whoFor = r.for === 'both' ? users.map(u => u.id) : [r.for]; const tell = [...new Set([r.by, ...whoFor])].filter(x => x && x !== d.uid);
+      const by = users.find(u => u.id === d.uid) || {}; const at = parts(by.tz, d.at);
+      for (const to of tell) { const tu = users.find(u => u.id === to) || {}; const mine = parts(tu.tz, d.at);
+        await once(`remdone_${d.id}_${to}`, () => send(ctx, to, { title: name(ctx, d.uid) + ' ✓ ' + r.text, body: 'Done at ' + clock([at.hour, at.min]) + (by.tz && tu.tz && by.tz !== tu.tz ? ' ' + (by.name || 'their') + '’s time (' + clock([mine.hour, mine.min]) + ' yours)' : ''), url: '#reminders', tag: 'remdone-' + r.id }, 'remdone')); } }
     for (const r of rems) { const t0 = hm(r.time); if (r.paused || !r.text || !t0) continue;
       for (const uid of r.for === 'both' ? users.map(u => u.id) : [r.for]) {
         const u = users.find(x => x.id === uid); if (!u || !subs.some(s => s.userId === uid)) continue;

@@ -8,7 +8,50 @@
   const uid = () => Math.random().toString(36).slice(2,10) + Date.now().toString(36);
   const listeners = new Set();
   let docs = {};           // id -> {id, collection, data, updated_at}
-  let sb = null, sbUser = null, channel = null;
+  let sb = null, sbUser = null, channel = null, sbUrl = '', sbKey = '';
+  // V2.17.1: big files (videos) upload on their own, in 6 MB pieces that pick up where they left off if the app closes
+  // (Supabase's resumable uploads), with progress — and never hold up messages, memories or photos behind them.
+  // Records that point at a video go as soon as its still is up; the other phone shows "on its way" until it arrives.
+  const BIG = 6 * 1024 * 1024, CHUNK = 6 * 1024 * 1024, LTUS = 'dj.tus.v1';
+  const isBig = id => typeof queue.blob[id] === 'number' && queue.blob[id] > BIG;
+  const upListeners = new Set(); const upProg = (id, sent, total, done) => upListeners.forEach(fn => { try { fn({ id, sent, total, done }); } catch (e) {} });
+  const b64 = s => btoa(unescape(encodeURIComponent(s)));
+  function xhr(method, url, headers, body, onProg){ return new Promise((res, rej) => { const x = new XMLHttpRequest(); x.open(method, url); Object.entries(headers).forEach(([k, v]) => x.setRequestHeader(k, v)); if (onProg && x.upload) x.upload.onprogress = e => onProg(e.loaded); x.onload = () => res(x); x.onerror = () => rej(new Error('network')); x.ontimeout = () => rej(new Error('timeout')); x.send(body || null); }); }
+  async function tusUpload(id, blob){
+    const { data: { session } } = await sb.auth.getSession(); const tok = session && session.access_token;
+    if (!tok || !sbUrl) throw Object.assign(new Error('no session'), { fallback: true });
+    const base = sbUrl.replace(/\/$/, '') + '/storage/v1/upload/resumable';
+    const H = { authorization: 'Bearer ' + tok, apikey: sbKey, 'tus-resumable': '1.0.0', 'x-upsert': 'true' };
+    const saved = readJSON(LTUS, {}); let loc = saved[id] && saved[id].size === blob.size ? saved[id].url : null; let off = 0;
+    if (loc) { const h = await xhr('HEAD', loc, H); if (h.status === 200 || h.status === 204) off = +h.getResponseHeader('upload-offset') || 0; else loc = null; }
+    if (!loc) {
+      const meta = { bucketName: 'assets', objectName: id, contentType: blob.type || 'application/octet-stream', cacheControl: '3600' };
+      const r = await xhr('POST', base, Object.assign({ 'upload-length': String(blob.size), 'upload-metadata': Object.entries(meta).map(([k, v]) => k + ' ' + b64(v)).join(',') }, H));
+      if (r.status !== 201) throw Object.assign(new Error('resumable ' + r.status), { fallback: true });   // not available → the ordinary upload
+      loc = r.getResponseHeader('location'); if (!loc) throw Object.assign(new Error('resumable: no location'), { fallback: true });
+      loc = new URL(loc, base).href; saved[id] = { url: loc, size: blob.size }; writeJSON(LTUS, saved); }
+    upProg(id, off, blob.size);
+    while (off < blob.size) { const end = Math.min(off + CHUNK, blob.size); const at = off;
+      const r = await xhr('PATCH', loc, Object.assign({ 'upload-offset': String(at), 'content-type': 'application/offset+octet-stream' }, H), blob.slice(at, end), n => upProg(id, at + n, blob.size));
+      if (r.status === 404 || r.status === 409 || r.status === 410) { const s2 = readJSON(LTUS, {}); delete s2[id]; writeJSON(LTUS, s2); throw new Error('resumable restart ' + r.status); }
+      if (r.status !== 204 && r.status !== 200) throw new Error('resumable ' + r.status);
+      off = +r.getResponseHeader('upload-offset') || end; upProg(id, off, blob.size); }
+    const s3 = readJSON(LTUS, {}); delete s3[id]; writeJSON(LTUS, s3);
+  }
+  let bigBusy = false, bigRetry = 4000;
+  async function bigUploads(){
+    if (bigBusy || !sb || !sbUser) return; bigBusy = true; let failed = false;
+    try { for (const id of Object.keys(queue.blob).filter(isBig)) {
+      const blob = await getBlobLocal(id).catch(() => null); if (!blob) { delete queue.blob[id]; saveQueue(); continue; }
+      try { await tusUpload(id, blob); }
+      catch (e) { if (!e.fallback) { failed = true; console.warn('upload', id, e.message); upProg(id, 0, blob.size, false); continue; }
+        let error = null; try { ({ error } = await sb.storage.from('assets').upload(id, blob, { upsert: true, contentType: blob.type || undefined })); } catch (e2) { error = e2; }
+        if (error && !/exists/i.test(error.message || '')) { failed = true; console.warn('upload', id, error.message); upProg(id, 0, blob.size, false); continue; } }
+      delete queue.blob[id]; uploaded.add(id); saveQueue(); saveUploaded(); upProg(id, blob.size, blob.size, true);
+      Store.pending = Math.max(0, Store.pending - 1); } }
+    finally { bigBusy = false; }
+    if (failed) { setTimeout(bigUploads, bigRetry); bigRetry = Math.min(bigRetry * 2, 120000); } else bigRetry = 4000;
+  }
   let queue = { put: {}, del: {}, blob: {}, blobDel: {} };   // pending remote work, keyed by id
   let synced = new Set();  // ids we know exist on the server (so a missing one means "deleted elsewhere")
   let uploaded = new Set();// blob ids already in the bucket
@@ -38,7 +81,7 @@
   async function putBlobLocal(id, blob){ const buf = await blob.arrayBuffer(); const db = await openIDB(); return new Promise((res,rej)=>{ const t=db.transaction('assets','readwrite'); t.objectStore('assets').put({ buf, type: blob.type }, id); t.oncomplete=()=>res(id); t.onerror=()=>rej(t.error); }); }
   async function getBlobLocal(id){ const db = await openIDB(); return new Promise((res,rej)=>{ const t=db.transaction('assets'); const q=t.objectStore('assets').get(id); q.onsuccess=()=>{ const v = q.result; if (!v) return res(null); if (v instanceof Blob) return res(v); res(new Blob([v.buf], { type: v.type || '' })); }; q.onerror=()=>rej(q.error); }); }
   async function localBlobIds(){ const db = await openIDB(); return new Promise((res,rej)=>{ const t=db.transaction('assets'); const q=t.objectStore('assets').getAllKeys(); q.onsuccess=()=>res(q.result||[]); q.onerror=()=>rej(q.error); }); }
-  const urlCache = new Map();
+  const urlCache = new Map(); const signed = new Map();
 
   // ---------- background sync ----------
   let flushing = false, flushTimer = null, retryMs = 2000;
@@ -64,7 +107,7 @@
         chunk.forEach(id => { if (queue.put[id] && docs[id] && queue.put[id] <= docs[id].updated_at) delete queue.put[id]; synced.add(id); });
         saveQueue(); saveSynced(); } };
       Object.keys(queue.put).forEach(id => { if (!docs[id]) delete queue.put[id]; });
-      const waiting = Object.keys(queue.blob); const json = id => JSON.stringify(docs[id].data);
+      const waiting = Object.keys(queue.blob).filter(b => !isBig(b)); const json = id => JSON.stringify(docs[id].data);
       const needs = id => waiting.length && waiting.some(b => json(id).includes(b));
       const ids = Object.keys(queue.put); const later = ids.filter(needs), now = ids.filter(id => !later.includes(id));
       await putDocs(now);
@@ -74,7 +117,8 @@
       if (bdel.length) { try { const { error } = await sb.storage.from('assets').remove(bdel); if (error) { failed = true; console.warn('remove', error.message); } else { bdel.forEach(id => { delete queue.blobDel[id]; uploaded.delete(id); }); saveQueue(); saveUploaded(); } } catch (e) { failed = true; console.warn('remove', e.message); } }
       // photos / voice notes (the ones a chat message is waiting on first)
       const chatIds = later.filter(id => docs[id] && docs[id].collection === 'bubbles').map(json).join(' ');
-      const order = waiting.slice().sort((a, b) => (chatIds.includes(b) ? 1 : 0) - (chatIds.includes(a) ? 1 : 0));
+      const sz = b => typeof queue.blob[b] === 'number' ? queue.blob[b] : 0;
+      const order = waiting.slice().sort((a, b) => ((chatIds.includes(b) ? 1 : 0) - (chatIds.includes(a) ? 1 : 0)) || sz(a) - sz(b));
       for (const id of order) {
         const blob = await getBlobLocal(id).catch(() => null);
         if (!blob) { delete queue.blob[id]; continue; }
@@ -82,12 +126,12 @@
         if (error && !/exists/i.test(error.message || '')) { failed = true; console.warn('upload', error.message); continue; }
         delete queue.blob[id]; uploaded.add(id); saveQueue(); saveUploaded();
         // anything that was only waiting on this photo can go now
-        const ready = later.filter(d => queue.put[d] && docs[d] && !Object.keys(queue.blob).some(b => json(d).includes(b)));
+        const ready = later.filter(d => queue.put[d] && docs[d] && !Object.keys(queue.blob).some(b => !isBig(b) && json(d).includes(b)));
         if (ready.length) await putDocs(ready);
       }
       await putDocs(Object.keys(queue.put).filter(id => docs[id]));
     } catch (e) { failed = true; console.warn('sync', e.message); }
-    flushing = false;
+    flushing = false; bigUploads();
     if (failed) { scheduleFlush(retryMs); retryMs = Math.min(retryMs * 2, 60000); }
     else { retryMs = 2000; if (Object.keys(queue.put).length || Object.keys(queue.del).length || Object.keys(queue.blob).length || Object.keys(queue.blobDel).length) scheduleFlush(); }
     Store.pending = Object.keys(queue.put).length + Object.keys(queue.del).length + Object.keys(queue.blob).length + Object.keys(queue.blobDel).length;
@@ -114,7 +158,7 @@
     async putBlob(blob, ext){
       const id = uid() + (ext ? '.' + ext : '');
       await putBlobLocal(id, blob);
-      queue.blob[id] = 1; saveQueue(); scheduleFlush();
+      queue.blob[id] = blob.size || 1; saveQueue(); scheduleFlush();
       return id;
     },
     async removeBlob(id){
@@ -137,6 +181,26 @@
     // a local-only copy (small previews made on this phone for older photos); never uploaded
     async putLocalBlob(id, blob){ try { await putBlobLocal(id, blob); } catch (e) {} },
     async localBlob(id){ return getBlobLocal(id).catch(() => null); },
+    onUpload(fn){ upListeners.add(fn); return () => upListeners.delete(fn); },
+    uploading(){ return Object.keys(queue.blob).filter(isBig); },
+    // a video to play: this phone's copy, or a link that streams it (it starts playing straight away instead of
+    // downloading all of it first). null = not uploaded yet.
+    async mediaUrl(id){
+      if (!id) return null; if (urlCache.has(id)) return urlCache.get(id);
+      const local = await getBlobLocal(id).catch(() => null); if (local) { const u = URL.createObjectURL(local); urlCache.set(id, u); return u; }
+      if (!sb) return null; const c = signed.get(id); if (c && c.until > Date.now()) return c.url;
+      try { const { data, error } = await sb.storage.from('assets').createSignedUrl(id, 6 * 3600); if (error || !data || !data.signedUrl) return null; signed.set(id, { url: data.signedUrl, until: Date.now() + 5.5 * 3600e3 }); return data.signedUrl; } catch (e) { return null; }
+    },
+    // the whole file (to save to Photos), with progress — not kept on the phone, videos are big
+    async fetchBlob(id, onProg){
+      const local = await getBlobLocal(id).catch(() => null); if (local) return local;
+      const u = await Store.mediaUrl(id); if (!u) return null;
+      const r = await fetch(u); if (!r.ok) return null; const total = +r.headers.get('content-length') || 0; const type = (r.headers.get('content-type') || '').split(';')[0];
+      if (!r.body || !r.body.getReader) return new Blob([await r.arrayBuffer()], { type });
+      const rd = r.body.getReader(); const parts = []; let got = 0;
+      for (;;) { const { done, value } = await rd.read(); if (done) break; parts.push(value); got += value.length; if (onProg && total) onProg(got / total); }
+      return new Blob(parts, { type });
+    },
     async blob(id){ let b = await getBlobLocal(id).catch(() => null); if (!b && sb) { const { data } = await sb.storage.from('assets').download(id); if (data) { b = data; putBlobLocal(id, b).catch(() => {}); uploaded.add(id); saveUploaded(); } } return b; },
     exportJSON(){ return JSON.stringify(Object.values(docs), null, 2); },
     // put back a photo / voice note from a backup under its original id (uploaded again if the server lacks it)
@@ -150,7 +214,7 @@
     async connect(cfg){
       loadLocal();
       if (!cfg || !cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY || !window.supabase) { this.mode = 'local'; return; }
-      sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+      sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY); sbUrl = cfg.SUPABASE_URL; sbKey = cfg.SUPABASE_ANON_KEY;
       this.mode = 'supabase';
       const { data: { session } } = await sb.auth.getSession();
       sbUser = session ? session.user : null; this.user = sbUser;

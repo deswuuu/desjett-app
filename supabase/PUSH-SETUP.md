@@ -56,3 +56,6 @@ for an import instead of nothing.
      )
    $$);
    ```
+
+## Reminder ✓ notifications (V2.17.1)
+**Edge Functions → notify**: paste the new `functions/notify/index.ts` and **Deploy**. Nothing else — it uses the every-minute check you already have.
